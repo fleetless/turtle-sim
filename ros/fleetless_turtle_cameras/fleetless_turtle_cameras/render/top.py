@@ -43,12 +43,6 @@ SIXTEENTHS = 1 << SHIFT
 _NOTHING = np.empty((look.TOP_SIZE_PX, look.TOP_SIZE_PX, 3), np.uint8)
 _NOTHING[:] = look.OUTSIDE
 
-# A lightning bolt, the usual sign for "charge here": the view's, in a
-# square from (0, 0) top left to (1, 1).
-BOLT = ((0.58, 0.06), (0.24, 0.56), (0.47, 0.56), (0.40, 0.94), (0.76, 0.42), (0.52, 0.42))
-BOLT_SIZE = 0.62
-"""Of the pad's narrower side."""
-
 
 def render(scene: Scene) -> np.ndarray:
     """The picture as `[row, column]` of red, green and blue bytes, 480 x 480."""
@@ -75,25 +69,16 @@ def render(scene: Scene) -> np.ndarray:
 
     trail = pixels(scene.trail)
     if len(trail) >= 2:
-        cv2.polylines(picture, [trail], False, look.TRAIL, 1, cv2.LINE_AA, SHIFT)
+        cv2.polylines(picture, [trail], False, look.TRAIL, look.TOP_TRAIL_PX, cv2.LINE_AA, SHIFT)
 
     plan = pixels(scene.plan)
     if len(plan) >= 2:
-        cv2.polylines(picture, [plan], False, look.PLAN, 2, cv2.LINE_AA, SHIFT)
+        cv2.polylines(picture, [plan], False, look.PLAN, look.TOP_PLAN_PX, cv2.LINE_AA, SHIFT)
     if len(plan) >= 1:
         target = plan[-1]
-        cv2.circle(
-            picture, target, length(look.TOP_TARGET_RADIUS_M), look.PLAN, 2, cv2.LINE_AA, SHIFT
-        )
-        cv2.circle(
-            picture,
-            target,
-            length(0.3 * TURTLE_RADIUS_M),
-            look.PLAN,
-            cv2.FILLED,
-            cv2.LINE_AA,
-            SHIFT,
-        )
+        ring, dot = length(look.TOP_TARGET_RADIUS_M), length(look.TOP_TARGET_DOT_M)
+        cv2.circle(picture, target, ring, look.PLAN, look.TOP_PLAN_PX, cv2.LINE_AA, SHIFT)
+        cv2.circle(picture, target, dot, look.PLAN, cv2.FILLED, cv2.LINE_AA, SHIFT)
 
     _draw_turtle(picture, scene, pixels, length)
     return picture
@@ -126,20 +111,20 @@ def _draw_turtle(picture: np.ndarray, scene: Scene, pixels, length) -> None:
         cv2.circle(picture, pixels(at)[0], length(radius_m), colour, thickness, cv2.LINE_AA, SHIFT)
 
     ring = look.TOP_MARKER_RADIUS_M
-    circle(centre, ring, look.TURTLE_MARKER, 1)
-    arrowhead = [
-        centre + 1.75 * ring * ahead,
-        centre + 1.12 * ring * ahead + 0.42 * ring * left,
-        centre + 1.12 * ring * ahead - 0.42 * ring * left,
-    ]
+    circle(centre, ring, look.TURTLE_MARKER, look.TOP_MARKER_RING_PX)
+    tip = centre + look.TOP_ARROW_TIP * ring * ahead
+    base = centre + look.TOP_ARROW_BASE * ring * ahead
+    to_the_side = look.TOP_ARROW_HALF_WIDTH * ring * left
+    arrowhead = [tip, base + to_the_side, base - to_the_side]
     cv2.fillConvexPoly(picture, pixels(arrowhead), look.TURTLE_MARKER, cv2.LINE_AA, SHIFT)
 
     # The head first: the shell lies over where it joins.
     r = TURTLE_RADIUS_M
-    circle(centre + (r + 0.012) * ahead, 0.036, look.TURTLE_SKIN)
+    head = centre + (r + look.TOP_HEAD_PAST_THE_RIM_M) * ahead
+    circle(head, look.TOP_HEAD_RADIUS_M, look.TURTLE_SKIN)
     circle(centre, r, look.TURTLE_RIM)
-    circle(centre, 0.9 * r, look.TURTLE_SHELL)
-    circle(centre, 0.5 * r, look.TURTLE_SHELL_TOP)
+    circle(centre, look.TOP_SHELL * r, look.TURTLE_SHELL)
+    circle(centre, look.TOP_SHELL_TOP * r, look.TURTLE_SHELL_TOP)
 
 
 # --- The world's picture, drawn once per world ------------------------------
@@ -190,7 +175,8 @@ def _draw_squares(picture: np.ndarray) -> None:
                 continue
             name = square_of(west // SCALE, south // SCALE)
             # Text hangs from its lower left corner; a square's top is `step` above its south.
-            corner = (west + 4, rows - south - step + 13)
+            east, down = look.TOP_NAME_INSET_PX
+            corner = (west + east, rows - south - step + down)
             cv2.putText(
                 drawn,
                 name,
@@ -198,7 +184,7 @@ def _draw_squares(picture: np.ndarray) -> None:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 look.TOP_NAME_SCALE,
                 look.SQUARE_LINES,
-                1,
+                look.TOP_NAME_STROKE_PX,
                 cv2.LINE_AA,
             )
     opacity = look.TOP_LINE_OPACITY
@@ -213,9 +199,9 @@ def _draw_pad_mark(picture: np.ndarray, north_up: np.ndarray) -> None:
     top, left = rows.min() * SCALE, columns.min() * SCALE
     height = (rows.max() + 1) * SCALE - top
     width = (columns.max() + 1) * SCALE - left
-    size = BOLT_SIZE * min(width, height)
+    size = look.TOP_PAD_MARK_SIZE * min(width, height)
     corner = np.array([left + (width - size) / 2 - 0.5, top + (height - size) / 2 - 0.5])
-    bolt = np.rint((corner + np.array(BOLT) * size) * SIXTEENTHS).astype(np.int32)
+    bolt = np.rint((corner + np.array(look.TOP_PAD_MARK) * size) * SIXTEENTHS).astype(np.int32)
     cv2.fillPoly(picture, [bolt], look.PAD_MARK, cv2.LINE_AA, SHIFT)
 
 
