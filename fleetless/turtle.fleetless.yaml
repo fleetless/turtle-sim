@@ -134,17 +134,19 @@ datapoints:
     field: mode
     rate_throttle_hz: 2
     description: |
-      What the turtle is doing, as one word. `teleop`: a velocity command
-      other than zero arrived within the last 0.5 s. `charging`: it stands
-      on the charging pad below 100 %. `idle`: neither.
+      What the turtle is doing, as one word. `docking`: a dock runs.
+      `auto`: a drive_to or drive_to_square runs. `teleop`: a velocity
+      command other than zero arrived within the last 0.5 s. `charging`:
+      it stands on the charging pad below 100 %. `idle`: none of these.
 
   odometer:
     topic: /turtle/status
     type: fleetless_turtle_msgs/msg/TurtleStatus
     field: odometer_m
     description: |
-      Distance driven since the simulator started, in metres, forwards and
-      backwards alike. It only grows. The simulated odometry is exact.
+      Distance driven since the simulator started or was last reset, in
+      metres, forwards and backwards alike. It only grows, until a reset
+      puts it back to zero. The simulated odometry is exact.
     numeric:
       unit: m
       decimals: 1
@@ -169,7 +171,7 @@ datapoints:
     rate_throttle_hz: 2
     description: |
       How often the bumper has gone from false to true since the simulator
-      started. One long push counts once.
+      started or was last reset. One long push counts once.
     numeric:
       decimals: 0
     chart:
@@ -281,6 +283,185 @@ publishers:
         linear: { x: 0.0, y: 0.0, z: 0.0 }
         angular: { x: 0.0, y: 0.0, z: 0.0 }
     quiet_timeout_ms: 2000
+
+# One request, one reply. The reply's `success` says whether it was done and
+# `message` says so in a sentence. The turtle checks the arguments itself as
+# well: a caller inside ROS has no cloud in front of it.
+services:
+  reset:
+    ros_name: /turtle/reset
+    type: std_srvs/srv/Trigger
+    description: |
+      Puts everything back to the start: the turtle on the charging pad in
+      square A1, heading east, the battery at 100 %, the map as loaded,
+      the trail off and empty, odometer and collisions at zero. A goal
+      that runs ends with the reason `reset`. Always succeeds.
+
+  teleport:
+    ros_name: /turtle/teleport
+    type: fleetless_turtle_msgs/srv/Teleport
+    description: |
+      Puts the turtle on the centre of a cell, standing, with a heading.
+      Declined, with `success: false` and a sentence that says why, where
+      the turtle does not fit: on a wall, a rock or water, and on a cell
+      right beside one. Battery, odometer and trail stay as they are. A
+      goal that runs ends with the reason `teleported`.
+    message:
+      x: ${cell_x}
+      y: ${cell_y}
+      heading_deg: ${heading_deg}
+    parameters:
+      cell_x:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The cell's x, 0 to 255 from the west edge. The same count the datapoint cell_x reports.
+      cell_y:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The cell's y, 0 to 255 from the south edge. The same count the datapoint cell_y reports.
+      heading_deg:
+        type: float32
+        min_value: 0
+        max_value: 360
+        default: 0
+        description: Where the turtle looks afterwards. 0 is east, 90 north, counter-clockwise.
+
+  set_block:
+    ros_name: /turtle/set_block
+    type: fleetless_turtle_msgs/srv/SetBlock
+    description: |
+      Puts a rock on a cell, or frees the cell, whatever it was: a wall
+      and water can be freed too. Declined, with `success: false` and a
+      sentence, on a cell of the charging pad and on a cell the turtle
+      touches; it is two cells wide. A turtle on its way to a goal looks
+      at its path at once and plans again if the rock is in it. `reset`
+      brings the map back as it was loaded.
+    message:
+      x: ${cell_x}
+      y: ${cell_y}
+      occupied: ${occupied}
+    parameters:
+      cell_x:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The cell's x, 0 to 255 from the west edge. The same count the datapoint cell_x reports.
+      cell_y:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The cell's y, 0 to 255 from the south edge. The same count the datapoint cell_y reports.
+      occupied:
+        type: bool
+        default: true
+        description: True puts a rock on the cell, false frees it.
+
+  set_trail:
+    ros_name: /turtle/set_trail
+    type: std_srvs/srv/SetBool
+    description: |
+      Switches the trail on or off. While it is on, the turtle records
+      where it has been, a point every 0.1 m, the newest 2000, and the
+      view draws them. Switching it off clears it, and so does `reset`.
+      The reply's `message` says which it is now.
+    message:
+      data: ${record}
+    parameters:
+      record:
+        type: bool
+        description: True records the trail, false stops and clears it.
+
+# A goal takes time, reports on the way and can be cancelled. Every goal is
+# accepted and answered through its result: `success`, a `reason` from the
+# list below and a `message` of one sentence. One goal moves the turtle at a
+# time, across all three actions.
+#
+#   reached           it stands on the target                       succeeded
+#   charged           dock: the battery has reached the target      succeeded
+#   out_of_range      no such cell, no such square, no such charge  aborted
+#   target_occupied   the target blocks, or the turtle does not fit aborted
+#   unreachable       no path leads there                           aborted
+#   stuck             no progress for five seconds                  aborted
+#   preempted         another goal was started                      aborted
+#   teleop_override   a `drive` command other than zero arrived     aborted
+#   teleported        `teleport` moved the turtle                   aborted
+#   reset             `reset` was called                            aborted
+#   canceled          the caller cancelled                          canceled
+actions:
+  drive_to:
+    ros_name: /turtle/drive_to
+    type: fleetless_turtle_msgs/action/DriveTo
+    description: |
+      Drives the turtle to the centre of a cell and stops there. It plans
+      a path round walls, rocks and water, keeps 0.05 m of room, turns on
+      the spot and drives at up to 0.5 m/s; across the garden takes about
+      a minute. Feedback comes twice a second: `phase` (planning,
+      driving, replanning), the cell it is in, `remaining_m` along the
+      path and `progress` from 0 to 1. The result carries `success`,
+      `reason`, a `message` of one sentence, the cell where it ended,
+      `distance_m` and `duration_s`. Reasons: reached, target_occupied
+      (the cell blocks, or the turtle does not fit beside what does),
+      unreachable, stuck, preempted (a drive_to_square or a dock was
+      started), teleop_override (a `drive` command other than zero
+      arrived), teleported, reset, canceled. A cancel brakes the turtle
+      and ends the goal within 2 s. A zero `drive` command ends nothing.
+    message:
+      x: ${cell_x}
+      y: ${cell_y}
+    parameters:
+      cell_x:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The target cell's x, 0 to 255 from the west edge. The same count the datapoint cell_x reports.
+      cell_y:
+        type: int32
+        min_value: 0
+        max_value: 255
+        description: The target cell's y, 0 to 255 from the south edge. The same count the datapoint cell_y reports.
+
+  drive_to_square:
+    ros_name: /turtle/drive_to_square
+    type: fleetless_turtle_msgs/action/DriveToSquare
+    description: |
+      Drives the turtle into a square, A1 to P16: to the cell nearest to
+      the square's centre that it fits on. The letter follows x from west
+      to east, the number y from south to north; the charging pad is in
+      A1. Everything else is as for drive_to: the same feedback, the same
+      result, the same reasons, and `target_occupied` if the whole square
+      is wall, rock or water. A drive_to or a dock that is started while
+      this runs ends it with `preempted`.
+    message:
+      square: ${square}
+    parameters:
+      square:
+        type: string
+        regex: "^[A-P]([1-9]|1[0-6])$"
+        description: The square's name, a letter A to P and a number 1 to 16, like C7.
+
+  dock:
+    ros_name: /turtle/dock
+    type: fleetless_turtle_msgs/action/Dock
+    description: |
+      Drives the turtle onto the charging pad in square A1 and waits there
+      until the battery has reached `target_percent`; a full charge from
+      empty takes one minute. It succeeds at once if the battery is
+      already there on arrival. Feedback comes twice a second: `phase`
+      (driving, charging), `battery_percent` and `remaining_m`. The result
+      carries `success`, `reason`, a `message` of one sentence,
+      `battery_percent` and `duration_s`. Reasons: charged, unreachable,
+      stuck, preempted, teleop_override, teleported, reset, canceled.
+    message:
+      target_percent: ${target_percent}
+    parameters:
+      target_percent:
+        type: float32
+        min_value: 1
+        max_value: 100
+        default: 100
+        description: The charge to wait for on the pad, in percent.
 
 cameras:
   # Both are drawn inside the container, on the CPU, ten times a second.

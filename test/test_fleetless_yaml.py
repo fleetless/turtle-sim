@@ -17,10 +17,13 @@ import yaml
 from fleetless_turtle_cameras.render import constants as look
 from fleetless_turtle_sim.core import constants as c
 from fleetless_turtle_sim.core import joints
+from fleetless_turtle_sim.core.goals import REASONS
+from fleetless_turtle_sim.core.world import square_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "fleetless" / "turtle.fleetless.yaml"
-MSGS = ROOT / "ros" / "fleetless_turtle_msgs" / "msg"
+INTERFACES = ROOT / "ros" / "fleetless_turtle_msgs"
+MSGS = INTERFACES / "msg"
 
 STATUS = "fleetless_turtle_msgs/msg/TurtleStatus"
 
@@ -52,18 +55,76 @@ CAMERAS = {
 }
 
 
+# Slug: (ROS name, type, the request's or the goal's fields).
+SERVICES = {
+    "reset": ("/turtle/reset", "std_srvs/srv/Trigger", None),
+    "teleport": ("/turtle/teleport", "fleetless_turtle_msgs/srv/Teleport", "srv/Teleport.srv"),
+    "set_block": ("/turtle/set_block", "fleetless_turtle_msgs/srv/SetBlock", "srv/SetBlock.srv"),
+    "set_trail": ("/turtle/set_trail", "std_srvs/srv/SetBool", None),
+}
+ACTIONS = {
+    "drive_to": (
+        "/turtle/drive_to",
+        "fleetless_turtle_msgs/action/DriveTo",
+        "action/DriveTo.action",
+    ),
+    "drive_to_square": (
+        "/turtle/drive_to_square",
+        "fleetless_turtle_msgs/action/DriveToSquare",
+        "action/DriveToSquare.action",
+    ),
+    "dock": ("/turtle/dock", "fleetless_turtle_msgs/action/Dock", "action/Dock.action"),
+}
+
+CELL = {"type": "int32", "min_value": 0, "max_value": c.GRID_CELLS - 1}
+# The ROS fields a parameter of another name fills.
+PARAMETER_OF = {"x": "cell_x", "y": "cell_y"}
+
+
+def fields_of(definition: str, part: int = 0) -> dict[str, str]:
+    """The fields of one part of a .srv or .action file, name to type: 0 is the request or goal."""
+    text = (INTERFACES / definition).read_text().split("\n---\n")[part]
+    return {name: kind for kind, name in re.findall(r"^(\w+) (\w+)", text, re.MULTILINE)}
+
+
+def flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def bounds(parameter: dict) -> dict:
+    """A parameter without its description."""
+    return {key: value for key, value in parameter.items() if key != "description"}
+
+
 @pytest.fixture(scope="module")
 def config():
     return yaml.safe_load(CONFIG.read_text())
 
 
-def test_it_is_a_version_1_document_for_any_organisation(config):
+@pytest.fixture(scope="module")
+def entries(config):
+    """Every entry of every section, by slug. No slug is used twice."""
+    sections = ("datapoints", "publishers", "services", "actions", "cameras")
+    merged = {}
+    for section in sections:
+        assert not set(config[section]) & set(merged), section
+        merged.update(config[section])
+    return merged
+
+
+def test_it_is_a_version_1_document_for_any_organisation(config, entries):
     assert config["fleetless"] == 1
     # No role and no access section: it publishes into any organisation.
     assert "access" not in config
-    entries = {**config["datapoints"], **config["publishers"], **config["cameras"]}
     assert not [slug for slug, entry in entries.items() if "role" in entry]
-    assert set(config) == {"fleetless", "datapoints", "publishers", "cameras"}
+    assert set(config) == {
+        "fleetless",
+        "datapoints",
+        "publishers",
+        "services",
+        "actions",
+        "cameras",
+    }
 
 
 def test_the_datapoints_are_the_ones_the_turtle_offers(config):
@@ -81,8 +142,7 @@ def test_every_status_field_named_exists_in_the_message(config):
             assert entry["field"] in fields, slug
 
 
-def test_every_entry_and_every_parameter_has_a_description(config):
-    entries = {**config["datapoints"], **config["publishers"], **config["cameras"]}
+def test_every_entry_and_every_parameter_has_a_description(entries):
     for slug, entry in entries.items():
         assert len(entry.get("description", "").strip()) >= 40, slug
         for name, parameter in entry.get("parameters", {}).items():
@@ -274,3 +334,168 @@ def test_the_page_colours_the_battery_where_the_alert_fires(config):
     assert (
         low == config["datapoints"]["battery_soc"]["alerts"]["battery_low"]["condition"]["fire_at"]
     )
+
+
+# --- Services and actions ---------------------------------------------------
+
+
+def test_the_services_and_actions_are_the_ones_the_turtle_offers(config):
+    for section, expected in (("services", SERVICES), ("actions", ACTIONS)):
+        described = {
+            slug: (entry["ros_name"], entry["type"]) for slug, entry in config[section].items()
+        }
+        assert described == {slug: (name, kind) for slug, (name, kind, _) in expected.items()}
+    # The node has them under these names, and the definitions exist.
+    node = (ROOT / "ros/fleetless_turtle_sim/fleetless_turtle_sim/node.py").read_text()
+    for name, kind, definition in [*SERVICES.values(), *ACTIONS.values()]:
+        assert f'"{name.removeprefix("/")}"' in node, name
+        if definition is not None:
+            assert (INTERFACES / definition).is_file()
+            assert kind == f"fleetless_turtle_msgs/{definition.rsplit('.', 1)[0]}"
+
+
+def test_every_message_fills_every_field_of_its_request_from_a_parameter(config):
+    for section, expected in (("services", SERVICES), ("actions", ACTIONS)):
+        for slug, (_, _, definition) in expected.items():
+            entry = config[section][slug]
+            if definition is None:
+                continue
+            fields = fields_of(definition)
+            # Each field from the parameter of its own name, nothing fixed and
+            # nothing left out. A cell's two fields are the exception: a
+            # parameter's name has two letters at least, so `x` is `cell_x`.
+            named = {name: PARAMETER_OF.get(name, name) for name in fields}
+            assert entry["message"] == {name: f"${{{named[name]}}}" for name in fields}, slug
+            assert set(entry["parameters"]) == set(named.values()), slug
+            for name, kind in fields.items():
+                assert entry["parameters"][named[name]]["type"] == kind, f"{slug}.{name}"
+    assert "message" not in config["services"]["reset"]
+    assert "parameters" not in config["services"]["reset"]
+    trail = config["services"]["set_trail"]
+    assert trail["message"] == {"data": "${record}"}
+    assert bounds(trail["parameters"]["record"]) == {"type": "bool"}
+
+
+def test_a_cell_is_0_to_255_wherever_one_is_named(config):
+    for entry in (
+        config["services"]["teleport"],
+        config["services"]["set_block"],
+        config["actions"]["drive_to"],
+    ):
+        for name in ("cell_x", "cell_y"):
+            parameter = entry["parameters"][name]
+            assert bounds(parameter) == CELL
+            # One cell, one name: what goes in here is what the datapoint reports.
+            assert f"The same count the datapoint {name} reports." in parameter["description"]
+            assert config["datapoints"][name]["field"] == name
+
+
+def test_the_other_parameters_have_the_specs_bounds_and_defaults(config):
+    heading = config["services"]["teleport"]["parameters"]["heading_deg"]
+    assert bounds(heading) == {"type": "float32", "min_value": 0, "max_value": 360, "default": 0}
+    occupied = config["services"]["set_block"]["parameters"]["occupied"]
+    assert bounds(occupied) == {"type": "bool", "default": True}
+    target = config["actions"]["dock"]["parameters"]["target_percent"]
+    assert bounds(target) == {
+        "type": "float32",
+        "min_value": c.DOCK_TARGET_MIN_PERCENT,
+        "max_value": c.DOCK_TARGET_MAX_PERCENT,
+        "default": 100,
+    }
+
+
+def test_the_squares_pattern_takes_the_names_the_turtle_takes_and_no_other(config):
+    square = config["actions"]["drive_to_square"]["parameters"]["square"]
+    assert bounds(square) == {"type": "string", "regex": "^[A-P]([1-9]|1[0-6])$"}
+    # The cloud compiles it as a JavaScript pattern, where `$` is the end and
+    # nothing but the end. Anchored on both sides, it is the whole value.
+    pattern = square["regex"]
+    assert pattern.startswith("^") and pattern.endswith("$")
+    whole = re.compile(pattern.removeprefix("^").removesuffix("$"))
+    names = [f"{letter}{number}" for letter in "ABCDEFGHIJKLMNOP" for number in range(1, 17)]
+    assert len(names) == c.SQUARES * c.SQUARES
+    for name in names:
+        assert whole.fullmatch(name) and square_bounds(name) is not None, name
+    strangers = [
+        "Z9",
+        "A0",
+        "A17",
+        "Q1",
+        "a1",
+        "",
+        "A1 ",
+        " A1",
+        "A01",
+        "AA1",
+        "A1\n",
+        "P160",
+        "1A",
+    ]
+    for name in strangers:
+        assert not whole.fullmatch(name) and square_bounds(name) is None, repr(name)
+
+
+def test_the_numbers_in_the_goals_descriptions_are_the_simulators(config):
+    drive = flat(config["actions"]["drive_to"]["description"])
+    assert f"keeps {c.PLANNER_CLEARANCE_M} m of room" in drive
+    assert f"at up to {c.LINEAR_SPEED_LIMIT} m/s" in drive
+    assert "Feedback comes twice a second" in drive and c.GOAL_FEEDBACK_RATE_HZ == 2
+    assert "ends the goal within 2 s" in drive
+    # Braking from full speed and from a full turn takes well under that.
+    assert c.LINEAR_SPEED_LIMIT / c.LINEAR_ACCELERATION_LIMIT < 2.0
+    assert c.ANGULAR_SPEED_LIMIT / c.ANGULAR_ACCELERATION_LIMIT < 2.0
+
+    dock = flat(config["actions"]["dock"]["description"])
+    assert "a full charge from empty takes one minute" in dock and c.BATTERY_CHARGING_S == 60
+    assert "Feedback comes twice a second" in dock
+
+    trail = flat(config["services"]["set_trail"]["description"])
+    assert f"a point every {c.TRAIL_SPACING_M} m, the newest {c.TRAIL_MAX_POINTS}" in trail
+
+    mode = flat(config["datapoints"]["mode"]["description"])
+    for word in ("docking", "auto", "teleop", "charging", "idle"):
+        assert f"`{word}`" in mode
+
+
+def test_a_description_names_what_its_messages_really_hold(config):
+    for slug, phases in (
+        ("drive_to", "planning, driving, replanning"),
+        ("dock", "driving, charging"),
+    ):
+        definition = ACTIONS[slug][2]
+        description = flat(config["actions"][slug]["description"])
+        assert f"`phase` ({phases})" in description
+        # The phases are the ones the action's own definition names.
+        assert phases.replace(", ", " | ") in (INTERFACES / definition).read_text()
+        for part in (1, 2):  # the result, the feedback
+            for field in fields_of(definition, part):
+                if field not in ("cell_x", "cell_y"):
+                    assert f"`{field}`" in description, f"{slug}: {field}"
+
+
+def test_every_reason_a_description_names_is_one_the_turtle_gives(config):
+    text = CONFIG.read_text()
+    # The comment above the actions lists them all, with what becomes of the goal.
+    for reason in REASONS:
+        assert re.search(rf"^#   {reason} ", text, re.MULTILINE), reason
+    listed = set(re.findall(r"^#   (\w+) +\S.*(?:succeeded|aborted|canceled)$", text, re.MULTILINE))
+    assert listed == set(REASONS)
+    for slug in ("drive_to", "dock"):
+        # Without what stands in brackets behind a reason, to explain it.
+        description = re.sub(r" \([^)]*\)", "", flat(config["actions"][slug]["description"]))
+        named = re.search(r"Reasons: ([a-z_, ]+)\.", description)[1].split(", ")
+        assert len(named) >= 8, named
+        assert set(named) <= set(REASONS), slug
+        # What cannot happen to it is not named, and what the cloud refuses
+        # before the turtle hears of it is not either.
+        assert "out_of_range" not in named
+        assert ("charged" in named) == (slug == "dock")
+        assert ("reached" in named) == (slug == "drive_to")
+
+
+def test_the_counters_say_that_a_reset_starts_them_again(config):
+    for slug in ("odometer", "collisions"):
+        description = flat(config["datapoints"][slug]["description"])
+        assert "since the simulator started or was last reset" in description, slug
+    status = (MSGS / "TurtleStatus.msg").read_text()
+    assert status.count("since start or reset") == 2

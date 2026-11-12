@@ -3,8 +3,9 @@
 A turtle on two wheels in a garden of 256 × 256 cells, with ROS 2 Jazzy and
 the Fleetless Bridge, in one Docker image. One line starts it, and it
 connects to [Fleetless](https://fleetless.dev) exactly as a real robot does:
-live values, alerts, a publisher to drive it with, two cameras and a model
-that walks. It needs no GPU, no X11 and no robot.
+live values, alerts, a publisher to drive it with, services, actions that
+send it across the garden by itself, two cameras and a model that walks.
+It needs no GPU, no X11 and no robot.
 
 ![The view: the garden from above, the turtle and its laser.](docs/view.png)
 
@@ -67,10 +68,23 @@ action `fetch_types`) and publish again.
 - **Drive it.** The console's Controls send `drive`: a speed and a turn
   rate. Watch `square` change. When the messages stop, the turtle stops by
   itself, half a second later.
+- **Send it somewhere.** `drive_to_square` with `square: H9` is a job. The
+  turtle plans a path round the pond and the rocks, says twice a second how
+  far it has left, and the job ends `reached`. `M5` is all pond:
+  `target_occupied`. `N13` is a courtyard without a door: `unreachable`.
+  Cancel a job on the way and the turtle brakes and stands within two
+  seconds. Touch the Controls instead and the job ends `teleop_override`: a
+  person at the controls wins.
+- **Get in its way.** `set_block` puts a rock on a cell. Put one on its path
+  and it stops, plans again and goes round. `set_trail` with `record: true`
+  shows where it has been. `reset` clears up after you.
+
+![The view: the turtle on its way into the house, the path ahead of it with a pin on the target, its trail behind it.](docs/view-goal.png)
+
 - **Ask a model.** Connect an MCP client to Fleetless and ask what the robot
-  exposes (`robots.describe`), then to drive to the pond and say when
-  `range_front` drops below half a metre. The descriptions in the yaml are
-  all the model has to go on, which is why they are long.
+  exposes (`robots.describe`), then to take the turtle to the pond, as close
+  as it gets, and back to the pad to charge. The descriptions in the yaml
+  are all the model has to go on, which is why they are long.
 - **Build on it.** The [app starter](https://docs.fleetless.dev/recipes/app-starter/)
   is a dashboard on `@fleetless/sdk`. Point it at this robot.
 - **Look through its eyes.** The robot's **Cameras** show `top`, the map
@@ -85,8 +99,8 @@ action `fetch_types`) and publish again.
   that side has walked, so turning on the spot walks one side backwards.
 - **Empty the battery.** Full speed does it in five minutes. Then the turtle
   crawls, `battery_empty` fires, and the way out is the charging pad in
-  square `A1`, one minute for a full charge. `-e TURTLE_BATTERY_DRAIN=10`
-  gets you there sooner.
+  square `A1`, one minute for a full charge. `dock` takes it there and waits
+  until it is charged. `-e TURTLE_BATTERY_DRAIN=10` gets you there sooner.
 - **Hit something.** `obstacle_ahead` fires when a wall is 0.3 m ahead,
   `bumper` goes true at it, `collisions` counts. The turtle does not slide
   along walls. It was not asked to.
@@ -100,7 +114,6 @@ action `fetch_types`) and publish again.
 ## 📋 What the turtle exposes
 
 Everything in [`fleetless/turtle.fleetless.yaml`](fleetless/turtle.fleetless.yaml).
-Actions and services are on their way; this table grows with them.
 
 | Slug | Kind | What |
 |---|---|---|
@@ -111,13 +124,20 @@ Actions and services are on their way; this table grows with them.
 | `square` | datapoint | The square it is in, `A1` to `P16`. |
 | `heading` | datapoint | Degrees, 0 is east, counter-clockwise. |
 | `speed` | datapoint | m/s along the heading, negative backwards. |
-| `mode` | datapoint | `idle`, `teleop` or `charging`. |
+| `mode` | datapoint | `idle`, `teleop`, `auto`, `docking` or `charging`. |
 | `odometer` | datapoint | Metres driven, with history. |
 | `bumper`, `collisions` | datapoints | Pushing against something right now, and how often so far. |
 | `range_front`, `range_left`, `range_right` | datapoints | Metres to the nearest obstacle, 0.1 to 4.0. Alert `obstacle_ahead` on the front one, below 0.3 m. |
 | `scan` | datapoint | The whole laser scan: 72 ranges, 5° apart. |
 | `joint_states` | datapoint | The model's five joints, as the whole message: the head and four legs, in radians. It moves the model on the console's Model page. |
 | `drive` | publisher | `linear_speed` ±0.5 m/s, `angular_speed` ±2.0 rad/s. Without a new message for 500 ms, the bridge sends a zero Twist. |
+| `reset` | service | Back to the start: the pad, a full battery, the map as loaded, the counters at zero. |
+| `teleport` | service | `cell_x`, `cell_y`, `heading_deg`: puts the turtle on a cell. Declined where it does not fit. |
+| `set_block` | service | `cell_x`, `cell_y`, `occupied`: a rock on a cell, or the cell freed. Not on the pad, not under the turtle. |
+| `set_trail` | service | `record`: the trail of where the turtle has been, on, or off and cleared. |
+| `drive_to` | action | `cell_x`, `cell_y`, 0 to 255 each: drives to the centre of a cell. |
+| `drive_to_square` | action | `square`, `A1` to `P16`: drives into a square. |
+| `dock` | action | `target_percent`, 1 to 100: onto the charging pad, and waits there for the charge. |
 | `top` | camera | The map around the turtle, north up: 12 m × 12 m in 480 × 480 pixels, with the squares' names, the path, the target and the trail. 10 fps. |
 | `eye` | camera | What the turtle sees: 70° wide, from 0.1 m up, as far as 8 m. 320 × 240 pixels, 10 fps. |
 | the model | URDF | A shell, a head on a yaw joint and four legs on swing joints, at real size, with its meshes. The bridge finds it on `/robot_description`; the console stores it when you ask it to. |
@@ -126,6 +146,25 @@ Actions and services are on their way; this table grows with them.
 connected. The status values are throttled to 2 Hz, the booleans, the
 ranges and the joints are not. Both cameras send a still every five
 seconds whether anybody watches or not, and video while somebody does.
+
+**Every goal is accepted and answered through its result**: `success`, a
+`reason` from this list and a `message` of one sentence, such as `No path
+leads from cell (8, 8) to square N13.` One goal moves the turtle at a time,
+across all three actions. No goal stays open.
+
+| `reason` | The job | When |
+|---|---|---|
+| `reached` | succeeded | The turtle stands on the target. |
+| `charged` | succeeded | `dock`: the battery has reached `target_percent`. |
+| `out_of_range` | aborted | No such cell, square or charge. Fleetless refuses these before the turtle hears of them; a caller inside ROS gets this. |
+| `target_occupied` | aborted | The target is a wall, a rock or water, or the turtle does not fit beside one. |
+| `unreachable` | aborted | No path leads there, at the start or after a block landed on the only one. |
+| `stuck` | aborted | No progress for five seconds. The last resort. |
+| `preempted` | aborted | Another goal was started. |
+| `teleop_override` | aborted | A `drive` command other than zero arrived. A zero one ends nothing. |
+| `teleported` | aborted | `teleport` moved the turtle. |
+| `reset` | aborted | `reset` was called. |
+| `canceled` | canceled | The caller cancelled. The turtle brakes, and stands within two seconds. |
 
 ## 🗺️ Variables, and a map of your own
 
@@ -193,12 +232,19 @@ One container, one launch file, five processes:
 | the bridge | `ros-jazzy-fleetless-bridge` | Fleetless's own package from its apt repository, started by its own launch file, unchanged. Only with a token. |
 
 Nothing is special about any of them. The bridge sees the turtle through
-ROS topics, as it would see any robot, and so does the view. DDS stays inside
-the container, so the graph is yours to look at:
+ROS topics, services and actions, as it would see any robot, and the view
+through its topics. DDS stays inside the container, so the graph is yours to
+look at, and to use:
 
 ```sh
 docker exec -it turtle ros2 topic list
+docker exec -it turtle ros2 action send_goal --feedback /turtle/drive_to fleetless_turtle_msgs/action/DriveTo "{x: 40, y: 24}"
 ```
+
+The container keeps a `ros2` daemon running from its start, so the first
+answer is the whole graph and not the half a cold one knows. Inside ROS a
+cell's two fields are `x` and `y`. In Fleetless they are `cell_x` and
+`cell_y`, because a parameter there has two letters at least. Same cell.
 
 | Topic | Type | Rate |
 |---|---|---|
@@ -211,9 +257,24 @@ docker exec -it turtle ros2 topic list
 | `/turtle/status` | `fleetless_turtle_msgs/msg/TurtleStatus` | 10 Hz |
 | `/turtle/world` | `fleetless_turtle_msgs/msg/World` | latched |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | latched |
+| `/turtle/plan` | `nav_msgs/msg/Path` | latched: the path of the running goal, empty without one |
+| `/turtle/trail` | `nav_msgs/msg/Path` | latched, at most 1 Hz: the trail, empty while off |
 | `/joint_states` | `sensor_msgs/msg/JointState` | 20 Hz |
 | `/robot_description` | `std_msgs/msg/String` | latched |
 | `/turtle/camera/top/image_raw`, `/turtle/camera/eye/image_raw` | `sensor_msgs/msg/Image`, `rgb8` | 10 Hz |
+
+| Service | Type |
+|---|---|
+| `/turtle/reset` | `std_srvs/srv/Trigger` |
+| `/turtle/teleport` | `fleetless_turtle_msgs/srv/Teleport` |
+| `/turtle/set_block` | `fleetless_turtle_msgs/srv/SetBlock` |
+| `/turtle/set_trail` | `std_srvs/srv/SetBool` |
+
+| Action | Type | Goal |
+|---|---|---|
+| `/turtle/drive_to` | `fleetless_turtle_msgs/action/DriveTo` | `x`, `y` |
+| `/turtle/drive_to_square` | `fleetless_turtle_msgs/action/DriveToSquare` | `square` |
+| `/turtle/dock` | `fleetless_turtle_msgs/action/Dock` | `target_percent` |
 
 **Which file to read first**, if you are here to see how a ROS 2 robot is
 wired to Fleetless:
@@ -227,6 +288,11 @@ wired to Fleetless:
 4. [`core/simulation.py`](ros/fleetless_turtle_sim/fleetless_turtle_sim/core/simulation.py)
    and [`core/constants.py`](ros/fleetless_turtle_sim/fleetless_turtle_sim/core/constants.py):
    the simulation itself, without a line of ROS, and every number it uses.
+   Beside them, [`core/goals.py`](ros/fleetless_turtle_sim/fleetless_turtle_sim/core/goals.py)
+   is what an action becomes, and
+   [`core/navigation.py`](ros/fleetless_turtle_sim/fleetless_turtle_sim/core/navigation.py)
+   how the turtle finds its way: A* on the grid, and a follower that turns
+   on the spot.
 
 The other packages: `fleetless_turtle_msgs` holds the turtle's own messages,
 services and actions, and `fleetless_turtle_viewer` documents the view's
@@ -251,6 +317,11 @@ the bridge still runs. A real robot needs the first kind in its own
 controller, and neither is a safety function. Read the
 [safety notice](https://docs.fleetless.dev/#safety-notice) before the robot
 is real.
+
+**A goal knows the difference.** The failsafe's zero Twist reaches a turtle
+that is on its way to a goal whenever an app stops driving by hand. It ends
+nothing: only a command other than zero is a person at the controls, and
+that one ends the goal at once.
 
 **The odometry is exact.** The pose published is the pose simulated, and
 `map → odom` is the identity. No noise, no drift, no slip. A real robot is

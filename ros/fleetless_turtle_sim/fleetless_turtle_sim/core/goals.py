@@ -40,6 +40,21 @@ from .world import (
     square_bounds,
 )
 
+REASONS = (
+    "reached",
+    "charged",
+    "out_of_range",
+    "target_occupied",
+    "unreachable",
+    "stuck",
+    "preempted",
+    "teleop_override",
+    "teleported",
+    "reset",
+    "canceled",
+)
+"""The closed list. A result's `reason` is one of these."""
+
 SUCCEEDED = ("reached", "charged")
 """The reasons a goal succeeds with. `canceled` is cancelled, every other one aborted."""
 
@@ -138,6 +153,7 @@ class Goal:
     def end(self, reason: str, message: str | None = None) -> None:
         """End the goal, with a reason from the list and its sentence."""
         if self.result is None:
+            assert reason in REASONS, reason
             self.result = self._result(reason, message or self._sentence(reason))
             self._sim.goal_ended(self)
 
