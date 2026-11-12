@@ -458,6 +458,19 @@ class TestServicesAndActions(unittest.TestCase):
         status, result = fourth.result(timeout=30.0)
         self.assertEqual((status, result.reason), (SUCCEEDED, "reached"))
 
+    def test_25b_a_new_goal_overtakes_a_cancel_that_is_still_braking_the_turtle(self):
+        sent = self.on_the_lane()
+        answer = sent.cancel()
+        self.assertEqual(answer.return_code, 0)  # accepted, as every cancel is
+        # Half a second of braking lies ahead. The next goal is there sooner.
+        following = self.probe.send(DriveToSquare, "/turtle/drive_to_square", square="B2")
+        status, result = sent.result(timeout=5.0)
+        self.assertEqual(status, ABORTED)
+        self.assertEqual((result.success, result.reason), (False, "preempted"))
+        self.assertEqual(result.message, "Another goal was accepted on the way to cell (130, 30).")
+        status, result = following.result(timeout=30.0)
+        self.assertEqual((status, result.reason), (SUCCEEDED, "reached"))
+
     def test_26_a_zero_twist_ends_nothing_and_a_non_zero_one_ends_the_goal(self):
         sent = self.on_the_lane()
         heard = len(self.odometry)

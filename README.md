@@ -160,7 +160,7 @@ across all three actions. No goal stays open.
 | `target_occupied` | aborted | The target is a wall, a rock or water, or the turtle does not fit beside one. |
 | `unreachable` | aborted | No path leads there, at the start or after a block landed on the only one. |
 | `stuck` | aborted | No progress for five seconds. The last resort. |
-| `preempted` | aborted | Another goal was started. |
+| `preempted` | aborted | Another goal was started. Also when it overtakes a cancel that was still braking the turtle. |
 | `teleop_override` | aborted | A `drive` command other than zero arrived. A zero one ends nothing. |
 | `teleported` | aborted | `teleport` moved the turtle. |
 | `reset` | aborted | `reset` was called. |

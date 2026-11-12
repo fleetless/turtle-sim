@@ -493,6 +493,21 @@ def test_every_reason_a_description_names_is_one_the_turtle_gives(config):
         assert ("reached" in named) == (slug == "drive_to")
 
 
+def test_every_action_says_that_a_new_goal_overtakes_a_cancel(config):
+    """The spec's two rules meet there: a cancel is always accepted, and a
+    new goal ends the running one. A caller who cancels and starts the next
+    goal at once reads `preempted`, and reads here why."""
+    actions = config["actions"]
+    for slug in ("drive_to", "dock"):
+        description = flat(actions[slug]["description"])
+        assert "overtakes the cancel, and this one ends `preempted`." in description, slug
+    square = flat(actions["drive_to_square"]["description"])
+    assert "ends it with `preempted`, also when a cancel of it is still braking" in square
+    # Braking from full speed takes half a second, which is all the time there is.
+    assert c.LINEAR_SPEED_LIMIT / c.LINEAR_ACCELERATION_LIMIT == 0.5
+    assert "up to half a second to obey" in flat(CONFIG.read_text().replace("#", ""))
+
+
 def test_the_counters_say_that_a_reset_starts_them_again(config):
     for slug in ("odometer", "collisions"):
         description = flat(config["datapoints"][slug]["description"])
