@@ -31,6 +31,7 @@ def test_the_kinds_are_the_world_messages():
 def test_the_turtle():
     assert c.TURTLE_RADIUS_M == 0.1
     assert c.STEP_S == 0.02
+    assert c.CATCH_UP_STEPS == 5
     assert c.LINEAR_SPEED_LIMIT == 0.5
     assert c.ANGULAR_SPEED_LIMIT == 2.0
     assert c.LINEAR_ACCELERATION_LIMIT == 1.0

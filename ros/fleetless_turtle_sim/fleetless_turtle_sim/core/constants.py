@@ -52,6 +52,10 @@ does not count as touching it once floating point has had its say."""
 STEP_S = 0.02
 """The simulation step, fixed: 50 Hz."""
 
+CATCH_UP_STEPS = 5
+"""How many steps a late timer may take at once, a tenth of a second's
+worth. A longer lag is not made up: the world stood still."""
+
 TIME_TOLERANCE_S = 1e-9
 """Slack on a time. Times are sums of steps, and "after 0.5 s" must not
 depend on how twenty-five times 0.02 happens to round."""

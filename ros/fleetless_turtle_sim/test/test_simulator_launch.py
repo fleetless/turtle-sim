@@ -217,7 +217,8 @@ class TestSimulatorNode(unittest.TestCase):
         # Fields two wheels cannot follow are ignored.
         forward.linear.y = 5.0
         forward.angular.x = 5.0
-        for _ in range(40):  # two seconds at 20 Hz
+        first_message = time.monotonic()
+        for _ in range(40):  # two seconds at 20 Hz, or what the machine makes of it
             publisher.publish(forward)
             time.sleep(0.05)
         last_message = time.monotonic()
@@ -239,8 +240,11 @@ class TestSimulatorNode(unittest.TestCase):
 
         time.sleep(0.3)
         rest = self.latest_odometry().pose.pose.position.x
-        self.assertGreater(rest - start, 0.5)
-        self.assertLess(rest - start, 0.9)
+        # Real time, whatever the machine: 0.3 m/s for as long as the commands
+        # came, and for the half second the last one stayed good. Speeding up
+        # loses what slowing down gains.
+        expected = 0.3 * (last_message - first_message + 0.5)
+        self.assertAlmostEqual(rest - start, expected, delta=0.2 * expected)
         self.assertAlmostEqual(self.latest_odometry().pose.pose.position.y, 0.85)
         time.sleep(0.5)
         self.assertEqual(self.latest_odometry().pose.pose.position.x, rest)
