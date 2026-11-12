@@ -20,15 +20,28 @@ if [ "$#" -gt 0 ]; then
     exec /opt/turtle/start.sh "$@"
 fi
 
+# The container's stderr under a second number, for the turtle: it gets this
+# one, whatever has become of this shell's own by then (see `stop`).
+exec 3>&2
+
 stopping=
 turtle=
 # shellcheck disable=SC2317  # reached through the trap below
 stop() {
+    # bash announces a job that a signal ended ("User defined signal 1"), on
+    # its own stderr, at the first moment it notices: inside `wait`, or
+    # between two lines when the job ended there. The signal below ends the
+    # turtle that way when it comes before the turtle listens. That is this
+    # script's own doing and nobody's news, so from here on this shell's
+    # stderr goes nowhere. From here on and not before: without a stop, what
+    # bash has to say is the news. A turtle the kernel killed for its memory
+    # ("Killed"), a segmentation fault, a fork that failed.
+    exec 2> /dev/null
     stopping=yes
     # SIGUSR1 means "stop" to the turtle once it listens (launcher.py). Before
     # that nothing catches it, and it ends what is there on the spot, before
     # anything was started. Either way no stop is lost.
-    [ -z "$turtle" ] || kill -USR1 "$turtle" 2> /dev/null || true
+    [ -z "$turtle" ] || kill -USR1 "$turtle" || true
 }
 trap stop INT TERM
 
@@ -37,24 +50,17 @@ trap stop INT TERM
 # a process asks for the signal itself: no Python in there meets an
 # interrupt with its default, the stack trace. In a session of its own, so
 # that Ctrl-C in a terminal reaches this shell alone and takes the same
-# path as `docker stop`.
-#
-# bash announces a job that a signal ended ("User defined signal 1"), on its
-# own stderr, at the first moment it notices: inside `wait`, or between two
-# lines when the job ended there. A stop that comes before the turtle
-# listens ends it that way; that is this script's own doing and nobody's
-# news. So this shell's stderr goes nowhere from before the turtle is born
-# until the script ends, and the turtle is handed the real one. Whatever
-# this script itself has to say after this line goes to descriptor 3.
-exec 3>&2 2> /dev/null
+# path as `docker stop`. With the container's stderr for its own, also when
+# a stop came first and this shell's is gone.
 setsid /opt/turtle/start.sh 2>&3 3>&- &
 turtle=$!
 # A stop that came before the line above found nobody to tell.
 [ -z "$stopping" ] || kill -USR1 "$turtle" || true
 
 # `wait` returns as soon as a stop arrives, with the turtle still on its way
-# down. So: wait until it is gone, then ask how it ended.
-while kill -0 "$turtle"; do
+# down. So: wait until it is gone, then ask how it ended. That the turtle is
+# gone is what `kill -0` is asked for, and its "No such process" no error.
+while kill -0 "$turtle" 2> /dev/null; do
     wait "$turtle" || true
 done
 code=0

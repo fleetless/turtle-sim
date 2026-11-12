@@ -211,6 +211,44 @@ fi
 pass "docker stop with the entrypoint held back: ended in $took_ms ms, exit $code, an empty log"
 remove
 
+# --- A turtle ended by a signal nobody sent -------------------------------------
+# The kernel does that when memory runs out. The entrypoint is silent about
+# a stop that was asked for and about nothing else, so here bash's notice of
+# its job is in the log and names the signal. The exit code stays the
+# shell's 128 plus the signal.
+docker run --detach --name "$name" "$image" > /dev/null
+turtle_runs() {
+    log=$(docker logs "$name" 2>&1) || return 1
+    grep -qF "$NO_TOKEN" <<< "$log"
+}
+within 30 turtle_runs || fail "the turtle did not start"
+# The turtle is the process that runs launcher.py. /proc knows it without
+# any tool the image may not have.
+docker exec "$name" bash -c '
+    for process in /proc/[0-9]*; do
+        mapfile -d "" -t argv < "$process/cmdline" 2> /dev/null || continue
+        if [ "${argv[1]:-}" = /opt/turtle/launcher.py ]; then
+            kill -KILL "${process#/proc/}"
+        fi
+    done'
+code=$(timeout $((60 * patience)) docker wait "$name") \
+    || fail "the container did not end with its turtle"
+log=$(docker logs "$name" 2>&1)
+[ "$code" -eq 137 ] || fail "a turtle ended by SIGKILL left the container at exit $code, not 137"
+grep -qE "entrypoint\.sh: line [0-9]+: +[0-9]+ Killed" <<< "$log" \
+    || fail "a turtle ended by SIGKILL is not named in the log"
+pass "a turtle ended by SIGKILL: the log says Killed, exit $code"
+remove
+
+# --- A container that may not start a process -----------------------------------
+# With one process allowed, the entrypoint cannot start the turtle. bash
+# tries for a quarter of a minute and gives up. What it says about that is
+# the only word there is, and it has to reach the log.
+to_its_end "a container that may not start a process" "$name" --pids-limit 1 "$image"
+[ "$code" -ne 0 ] || fail "a container that may not start a process left exit 0"
+grep -qF "fork" <<< "$said" || fail "a fork that failed is not named in the log: $said"
+pass "a container that may not start a process says so, exit $code"
+
 # --- A view port that is no port ----------------------------------------------
 to_its_end "a view port that is no port" "$name" --env TURTLE_VIEW_PORT=abc "$image"
 [ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
