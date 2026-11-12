@@ -21,6 +21,10 @@ NO_TOKEN="FLEETLESS_TOKEN is not set: simulator and view are running, no bridge 
 TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/right
         /battery_state /turtle/status /turtle/world /map"
 
+# What is searched is fetched whole first and searched after. A pipe into
+# `grep -q` ends when grep has seen enough, and under pipefail the writer it
+# cut off fails the line: a check that fails on a full match, or passes on
+# one it should have refused.
 pass() { echo "PASS  $1"; }
 fail() {
     echo "FAIL  $1" >&2
@@ -51,17 +55,19 @@ docker run --detach --name "$name" --publish "127.0.0.1:$port:8765" "$image" > /
 within 30 healthz || fail "/healthz did not answer 200 within $((30 * patience)) s"
 pass "/healthz answers 200"
 
-docker logs "$name" 2>&1 | grep -qF "$NO_TOKEN" || fail "the log does not hold the no-token line"
+log=$(docker logs "$name" 2>&1)
+grep -qF "$NO_TOKEN" <<< "$log" || fail "the log does not hold the no-token line"
 pass "the log holds the no-token line"
 
 within 60 docker_says_healthy || fail "Docker's own health check did not turn healthy"
 pass "the image's HEALTHCHECK reports healthy"
 
-curl -fsS "http://127.0.0.1:$port/" | grep -qF "<title>turtle-sim</title>" || fail "/ is not the page"
+page=$(curl -fsS "http://127.0.0.1:$port/")
+grep -qF "<title>turtle-sim</title>" <<< "$page" || fail "/ is not the page"
 pass "/ is the page"
 
-curl -fsS "http://127.0.0.1:$port/fleetless.yaml" | grep -qx "fleetless: 1" \
-    || fail "/fleetless.yaml is not the shipped configuration"
+config=$(curl -fsS "http://127.0.0.1:$port/fleetless.yaml")
+grep -qx "fleetless: 1" <<< "$config" || fail "/fleetless.yaml is not the shipped configuration"
 pass "/fleetless.yaml is the shipped configuration"
 
 [ "$(docker exec "$name" id -u)" != 0 ] || fail "the container runs as root"
@@ -131,7 +137,8 @@ for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
     if [ "$took_ms" -ge $((5000 * patience)) ] || [ "$code" -ne 0 ]; then
         fail "docker stop $delay s after the start took $took_ms ms and the container exited $code"
     fi
-    if docker logs "$name" 2>&1 | grep -qF "Traceback"; then
+    log=$(docker logs "$name" 2>&1)
+    if grep -qF "Traceback" <<< "$log"; then
         fail "docker stop $delay s after the start left a stack trace"
     fi
     pass "docker stop $delay s after the start: ended in $took_ms ms, exit $code, no stack trace"
