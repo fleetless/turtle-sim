@@ -20,9 +20,12 @@ patience=${SMOKE_PATIENCE:-1}
 
 NO_TOKEN="FLEETLESS_TOKEN is not set: simulator and view are running, no bridge was started."
 TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/right
-        /battery_state /turtle/status /turtle/world /map
+        /battery_state /turtle/status /turtle/world /map /turtle/plan /turtle/trail
         /turtle/camera/top/image_raw /turtle/camera/eye/image_raw
         /joint_states /robot_description"
+NODES="/turtle_simulator /turtle_viewer"
+SERVICES="/turtle/reset /turtle/teleport /turtle/set_block /turtle/set_trail"
+ACTIONS="/turtle/drive_to /turtle/drive_to_square /turtle/dock"
 
 # What is searched is fetched whole first and searched after. A pipe into
 # `grep -q` ends when grep has seen enough, and under pipefail the writer it
@@ -89,6 +92,39 @@ docker run --detach --name "$name" --publish "127.0.0.1:$port:8765" "$image" > /
 within 30 healthz || fail "/healthz did not answer 200 within $((30 * patience)) s"
 pass "/healthz answers 200"
 
+# --- The ROS graph, asked once, without sourcing anything by hand -------------
+# Now, the moment the turtle is up, and each question once: the first answer
+# is the one that counts. `ros2` asks a daemon, and a daemon that only starts
+# with the first question has heard half the graph when it answers. This
+# one has listened since the turtle started (docker/ros2_daemon.py).
+#   names_all <what was listed> <the names it has to hold>
+names_all() {
+    local listed=$1 name
+    shift
+    for name in "$@"; do
+        grep -qxF "$name" <<< "$listed" || {
+            missing=$name
+            return 1
+        }
+    done
+}
+# shellcheck disable=SC2086  # the lists are split into their words on purpose
+{
+    listed=$(docker exec "$name" ros2 topic list) || fail "\`ros2 topic list\` inside failed"
+    names_all "$listed" $TOPICS || fail "the first \`ros2 topic list\` inside lacks $missing"
+    pass "the first \`ros2 topic list\` inside names every topic"
+
+    listed=$(docker exec "$name" ros2 node list) || fail "\`ros2 node list\` inside failed"
+    names_all "$listed" $NODES || fail "the first \`ros2 node list\` inside lacks $missing"
+    pass "the first \`ros2 node list\` inside names both nodes"
+
+    listed=$(docker exec "$name" ros2 service list) || fail "\`ros2 service list\` inside failed"
+    names_all "$listed" $SERVICES || fail "\`ros2 service list\` inside lacks $missing"
+    listed=$(docker exec "$name" ros2 action list) || fail "\`ros2 action list\` inside failed"
+    names_all "$listed" $ACTIONS || fail "\`ros2 action list\` inside lacks $missing"
+    pass "\`ros2 service list\` and \`ros2 action list\` inside name the four services and the three actions"
+}
+
 log=$(docker logs "$name" 2>&1)
 grep -qF "$NO_TOKEN" <<< "$log" || fail "the log does not hold the no-token line"
 pass "the log holds the no-token line"
@@ -107,16 +143,15 @@ pass "/fleetless.yaml is the shipped configuration"
 [ "$(docker exec "$name" id -u)" != 0 ] || fail "the container runs as root"
 pass "the container does not run as root"
 
-# --- The ROS graph, without sourcing anything by hand -------------------------
-graph_is_complete() {
-    local listed topic
-    listed=$(docker exec "$name" ros2 topic list) || return 1
-    for topic in $TOPICS; do
-        grep -qxF "$topic" <<< "$listed" || return 1
-    done
-}
-within 30 graph_is_complete || fail "\`ros2 topic list\` inside does not name every topic"
-pass "\`ros2 topic list\` inside names the topics"
+# --- A goal, sent as the README says ------------------------------------------
+# A drive of 1.2 m off the pad. `ros2 action send_goal` waits for the result
+# and prints it.
+sent=$(timeout $((60 * patience)) docker exec "$name" \
+    ros2 action send_goal /turtle/drive_to fleetless_turtle_msgs/action/DriveTo "{x: 20, y: 8}" 2>&1) \
+    || fail "\`ros2 action send_goal\` inside failed: $sent"
+grep -qF "reason: reached" <<< "$sent" || fail "the goal did not end with reached: $sent"
+grep -qF "SUCCEEDED" <<< "$sent" || fail "the goal did not end succeeded: $sent"
+pass "\`ros2 action send_goal\` inside drives the turtle to a cell: reached"
 
 # --- Both cameras, on the shared memory Docker gives a container ---------------
 # 64 MB of /dev/shm, and ROS moves messages between processes through it. A
@@ -238,16 +273,26 @@ to_its_end "the bridge alone" "$name-bridge" "$image" ros2 run fleetless_bridge 
 grep -qF "FLEETLESS_TOKEN is not set." <<< "$said" || fail "the bridge did not print its sentence: $said"
 pass "the bridge alone prints its sentence and exits 2"
 
-# --- docker stop --------------------------------------------------------------
+# --- docker stop, while a goal runs -------------------------------------------
+# A goal across the map, two seconds under way: its callback in the node is
+# waiting for it to end. The stop does not wait for either.
+docker exec --detach "$name" \
+    ros2 action send_goal /turtle/drive_to fleetless_turtle_msgs/action/DriveTo "{x: 240, y: 240}" \
+    > /dev/null
+auto() { grep -qx "auto" <<< "$(docker exec "$name" ros2 topic echo --once --field mode /turtle/status)"; }
+within 20 auto || fail "the goal across the map did not start"
+sleep 2
 started=$(date +%s)
 docker stop "$name" > /dev/null
 took=$(($(date +%s) - started))
 code=$(docker inspect --format '{{.State.ExitCode}}' "$name")
 # 137 would be Docker's SIGKILL after the grace period.
 if [ "$took" -ge 10 ] || [ "$code" -ne 0 ]; then
-    fail "docker stop took $took s and the container exited $code"
+    fail "docker stop with a goal running took $took s and the container exited $code"
 fi
-pass "docker stop ends the container in $took s, exit 0"
+log=$(docker logs "$name" 2>&1)
+if grep -qF "Traceback" <<< "$log"; then fail "docker stop with a goal running left a stack trace"; fi
+pass "docker stop with a goal running ends the container in $took s, exit 0"
 remove
 
 # --- A stop at any moment -------------------------------------------------------
