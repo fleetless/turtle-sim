@@ -20,9 +20,10 @@ export const KIND = { FREE: 0, WALL: 1, ROCK: 2, WATER: 3, PAD: 4 };
 const SQUARE_CELLS = 16;
 
 // How the kinds look. Heights are for the eye only: for the simulator a wall,
-// a rock and a pond block alike.
+// a rock and a pond block alike. The turtle's `eye` camera draws both as tall
+// as this page does, so one world has one look.
 const WALL_HEIGHT_M = 0.3;
-const ROCK_HEIGHT_M = 0.09;
+const ROCK_HEIGHT_M = 0.15;
 const FRAME_WIDTH_M = 1.3;
 // What is painted on the floor lies this far above it.
 const FLAT_M = 0.004;
