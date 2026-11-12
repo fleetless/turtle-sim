@@ -2,9 +2,11 @@
 """The cameras node on a real ROS graph, beside the real simulator.
 
 Both pictures with their size, their encoding and roughly their rate, what
-they show, and the two paths: nobody publishes `/turtle/plan` or
-`/turtle/trail` when this starts, then this test does, then it takes them
-back. The node is right in all three states.
+they show, and the two paths: the simulator's `/turtle/plan` and
+`/turtle/trail` are empty when this starts, then this test publishes a path
+and a trail of its own, then it takes them back. The node is right in all
+three states. A graph on which nobody publishes the two is the one of
+`test_cameras_node.py`.
 """
 
 import itertools
@@ -196,9 +198,17 @@ class TestCamerasNode(unittest.TestCase):
         self.assertTrue(sky.all())
 
     def test_4_a_path_and_a_trail_are_drawn_when_somebody_publishes_them(self):
-        # As launched, nobody does: the simulator of this test has no goals.
+        # As launched, the simulator does, and has nothing to show: no goal
+        # runs and the trail is off, so both of its paths are empty. This
+        # test's node may not have found the simulator yet, the pictures come
+        # from the cameras: it waits for the paths before it counts.
         for topic in ("/turtle/plan", "/turtle/trail"):
-            self.assertEqual(self.probe.node.count_publishers(topic), 0, topic)
+            heard = self.probe.listen(Path, topic, qos=LATCHED)
+            deadline = time.monotonic() + 30.0
+            while not heard and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertEqual([len(path.poses) for _, path in heard], [0], topic)
+            self.assertEqual(self.probe.node.count_publishers(topic), 1, topic)
         self.assertFalse(has(self.next_top(), look.PLAN).any())
 
         plan = self.latched(Path, "/turtle/plan")
