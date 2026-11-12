@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Prints the version of ros-jazzy-fleetless-bridge that Fleetless's apt
+# repository serves right now: the highest Version in its Packages index.
+# The Dockerfile pins the bridge to an exact version, and this is how the
+# bridge-bump workflow learns that there is a newer one.
+#
+# It only names the version. apt inside the image still verifies the package
+# against the Fleetless key. Any failure exits 1 with a sentence that names
+# the URL; there is no fallback.
+#
+# Usage: bridge-apt-version [<Packages index URL>]   (the URL is for tests)
+# Needs curl and dpkg, so it runs on Debian and Ubuntu.
+set -euo pipefail
+PKG=ros-jazzy-fleetless-bridge
+command -v dpkg > /dev/null || {
+    echo "bridge-apt-version: dpkg is needed to compare Debian versions." >&2
+    exit 1
+}
+url="${1:-https://registry.fleetless.dev/apt/dists/jazzy/main/binary-$(dpkg --print-architecture)/Packages}"
+
+index="$(curl -fsSL --max-time 20 "$url")" || {
+    echo "bridge-apt-version: could not read $url" >&2
+    exit 1
+}
+
+# A stanza starts with its Package: line, so that line decides whether the
+# Version: lines after it count.
+best=""
+while IFS= read -r version; do
+    if [ -z "$best" ] || dpkg --compare-versions "$version" gt "$best"; then best="$version"; fi
+done < <(awk -v pkg="$PKG" '/^Package:/ { p = ($2 == pkg) } p && /^Version:/ { print $2 }' <<< "$index")
+
+[ -n "$best" ] || {
+    echo "bridge-apt-version: $url lists no $PKG" >&2
+    exit 1
+}
+# Debian's version alphabet only: the value becomes a build argument and an
+# apt version pin.
+case "$best" in
+    *[!A-Za-z0-9.+~:-]*)
+        echo "bridge-apt-version: $url lists $PKG with a malformed version '$best'" >&2
+        exit 1
+        ;;
+esac
+printf '%s\n' "$best"

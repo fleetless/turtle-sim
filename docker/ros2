@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# `docker exec -it turtle ros2 topic list` lands here: ros2 with the turtle's
+# environment, so nobody sources anything by hand.
+# shellcheck source=/dev/null
+source /opt/turtle/environment.sh
+exec "/opt/ros/$ROS_DISTRO/bin/ros2" "$@"
