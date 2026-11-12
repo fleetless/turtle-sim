@@ -68,6 +68,7 @@ class FakeTurtle:
     def __init__(self):
         self.node = rclpy.create_node("fake_turtle")
         self.talking = False
+        self.heading = math.pi / 2  # north: a quarter turn counter-clockwise
         self._odometry = self.node.create_publisher(Odometry, "/odom", 10)
         self._status = self.node.create_publisher(TurtleStatus, "/turtle/status", 10)
         self._battery = self.node.create_publisher(BatteryState, "/battery_state", 10)
@@ -99,9 +100,8 @@ class FakeTurtle:
         odometry = Odometry()
         odometry.pose.pose.position.x = 1.25
         odometry.pose.pose.position.y = 4.05
-        # Heading north: a quarter turn counter-clockwise.
-        odometry.pose.pose.orientation.z = math.sin(math.pi / 4)
-        odometry.pose.pose.orientation.w = math.cos(math.pi / 4)
+        odometry.pose.pose.orientation.z = math.sin(self.heading / 2)
+        odometry.pose.pose.orientation.w = math.cos(self.heading / 2)
         self._odometry.publish(odometry)
 
     def _say_status(self):
@@ -323,6 +323,20 @@ def test_state_frames_carry_pose_status_battery_and_bridge(view, turtle):
     assert (state["collisions"], state["odometer_m"]) == (3, 12.5)
     assert (state["battery_percent"], state["charging"]) == (42.0, True)
     assert state["bridge"] is False
+
+
+def test_a_hair_below_a_full_turn_the_heading_is_0_and_not_360(view, turtle):
+    def heading_other_than(*known):
+        return lambda frame: frame["type"] == "state" and frame["heading_deg"] not in known
+
+    try:
+        turtle.heading = -1e-6  # 359.99994 degrees, which two decimals round to 360.00
+        assert frames(3.0, until=heading_other_than(90.0))[-1]["heading_deg"] == 0.0
+        turtle.heading = math.radians(359.99)
+        assert frames(3.0, until=heading_other_than(90.0, 0.0))[-1]["heading_deg"] == 359.99
+    finally:
+        turtle.heading = math.pi / 2
+    assert frames(3.0, until=heading_other_than(0.0, 359.99))[-1]["heading_deg"] == 90.0
 
 
 def test_scan_frames_carry_null_where_a_ray_hit_nothing(view, turtle):
