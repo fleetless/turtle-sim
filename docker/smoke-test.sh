@@ -141,7 +141,12 @@ for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
     if grep -qF "Traceback" <<< "$log"; then
         fail "docker stop $delay s after the start left a stack trace"
     fi
-    pass "docker stop $delay s after the start: ended in $took_ms ms, exit $code, no stack trace"
+    # Nor does the entrypoint's shell report how its job ended. A stop that
+    # was asked for is no news, and "User defined signal 1" explains nothing.
+    if grep -qE "User defined signal|entrypoint\.sh: line" <<< "$log"; then
+        fail "docker stop $delay s after the start left the shell's job notice"
+    fi
+    pass "docker stop $delay s after the start: ended in $took_ms ms, exit $code, a clean log"
     remove
 done
 
