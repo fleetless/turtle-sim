@@ -3,13 +3,16 @@
 
 It steps the simulation from one 50 Hz timer, hands it every `/cmd_vel`, and
 publishes what the core knows at the rates a real robot would. It does no
-physics of its own; `core/simulation.py` is the file to read for that.
+physics of its own; `core/simulation.py` is the file to read for that. A
+timer that comes late takes the steps it missed, up to a tenth of a second
+of them, so a busy machine does not slow the turtle down.
 """
 
 import array
 import math
 import signal
 import threading
+import time
 
 import numpy as np
 import rclpy
@@ -26,6 +29,7 @@ from sensor_msgs.msg import BatteryState, LaserScan, Range
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from .core import constants as c
+from .core.pace import Pace
 from .core.simulation import Simulation
 from .core.world import MapError, World
 
@@ -79,6 +83,9 @@ class SimulatorNode(Node):
         self._sim = Simulation(self._load_world(), battery_drain=self._battery_drain())
         # One lock around the simulation: every callback takes it.
         self._lock = threading.Lock()
+        # The core reads no clock. This node does, and asks how many steps
+        # are due whenever its timer gets round to it.
+        self._pace = Pace()
         self._warned_about_non_finite = False
         self._published_world_version = None
 
@@ -145,7 +152,8 @@ class SimulatorNode(Node):
 
     def _step(self) -> None:
         with self._lock:
-            self._sim.step()
+            for _ in range(self._pace.due(time.monotonic())):
+                self._sim.step()
             non_finite = self._sim.drive.non_finite_commands
             world_changed = self._sim.world_version != self._published_world_version
         if non_finite and not self._warned_about_non_finite:
