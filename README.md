@@ -3,8 +3,8 @@
 A turtle on two wheels in a garden of 256 × 256 cells, with ROS 2 Jazzy and
 the Fleetless Bridge, in one Docker image. One line starts it, and it
 connects to [Fleetless](https://fleetless.dev) exactly as a real robot does:
-live values, alerts, and a publisher to drive it with. It needs no GPU, no
-X11 and no robot.
+live values, alerts, a publisher to drive it with, two cameras and a model
+that walks. It needs no GPU, no X11 and no robot.
 
 ![The view: the garden from above, the turtle and its laser.](docs/view.png)
 
@@ -73,6 +73,14 @@ action `fetch_types`) and publish again.
   all the model has to go on, which is why they are long.
 - **Build on it.** The [app starter](https://docs.fleetless.dev/recipes/app-starter/)
   is a dashboard on `@fleetless/sdk`. Point it at this robot.
+- **Look through its eyes.** The robot's **Cameras** show `top`, the map
+  around the turtle, and `eye`, what it sees from 0.1 m above the lawn. Over
+  MCP a snapshot of either is a picture, so whatever you asked to drive can
+  also look where it is going.
+- **Watch it walk.** On the robot's **Model** page, choose **Add a URDF**,
+  then **Download from robot**, and pick `joint_states` as the datapoint
+  driving the joints. Then drive. Each side's legs swing with the distance
+  that side has walked, so turning on the spot walks one side backwards.
 - **Empty the battery.** Full speed does it in five minutes. Then the turtle
   crawls, `battery_empty` fires, and the way out is the charging pad in
   square `A1`, one minute for a full charge. `-e TURTLE_BATTERY_DRAIN=10`
@@ -83,11 +91,14 @@ action `fetch_types`) and publish again.
 
 ![Close to the turtle: its laser rays end at a hedge, with the rock alley behind it.](docs/view-close.png)
 
+| `top` | `eye` | the model |
+|---|---|---|
+| ![The top camera: the map around the turtle, north up, with the squares' names.](docs/camera-top.png) | ![The eye camera: the lawn, a rock, a hedge behind it, the sky.](docs/camera-eye.png) | ![The model: a green turtle with a head and four legs.](docs/model.png) |
+
 ## 📋 What the turtle exposes
 
 Everything in [`fleetless/turtle.fleetless.yaml`](fleetless/turtle.fleetless.yaml).
-Actions, services, cameras and a model are on their way; this table grows
-with them.
+Actions and services are on their way; this table grows with them.
 
 | Slug | Kind | What |
 |---|---|---|
@@ -103,11 +114,16 @@ with them.
 | `bumper`, `collisions` | datapoints | Pushing against something right now, and how often so far. |
 | `range_front`, `range_left`, `range_right` | datapoints | Metres to the nearest obstacle, 0.1 to 4.0. Alert `obstacle_ahead` on the front one, below 0.3 m. |
 | `scan` | datapoint | The whole laser scan: 72 ranges, 5° apart. |
+| `joint_states` | datapoint | The model's five joints, as the whole message: the head and four legs, in radians. It moves the model on the console's Model page. |
 | `drive` | publisher | `linear_speed` ±0.5 m/s, `angular_speed` ±2.0 rad/s. Without a new message for 500 ms, the bridge sends a zero Twist. |
+| `top` | camera | The map around the turtle, north up: 12 m × 12 m in 480 × 480 pixels, with the squares' names, the path, the target and the trail. 10 fps. |
+| `eye` | camera | What the turtle sees: 70° wide, from 0.1 m up, as far as 8 m. 320 × 240 pixels, 10 fps. |
+| the model | URDF | A shell, a head on a yaw joint and four legs on swing joints, at real size, with its meshes. The bridge finds it on `/robot_description`; the console stores it when you ask it to. |
 
 `bridge_state` is built in on every robot and says whether the bridge is
-connected. The status values are throttled to 2 Hz, the booleans and the
-ranges are not.
+connected. The status values are throttled to 2 Hz, the booleans, the
+ranges and the joints are not. Both cameras send a still every five
+seconds whether anybody watches or not, and video while somebody does.
 
 ## 🗺️ Variables, and a map of your own
 
@@ -164,11 +180,13 @@ This is the shipped one, `maps/garden.png`, drawn by
 
 ## ⚙️ How it works
 
-One container, one launch file, three processes:
+One container, one launch file, five processes:
 
 | Process | Package | Does |
 |---|---|---|
 | the simulator | `fleetless_turtle_sim` | Steps the world 50 times a second, takes `/cmd_vel`, publishes what a robot publishes. |
+| the cameras | `fleetless_turtle_cameras` | Subscribes like anybody else and draws both pictures on the CPU, with numpy and OpenCV. A camera nobody subscribes to is not drawn. |
+| the model's publisher | `robot_state_publisher` | ROS's own. Publishes the URDF and turns the joints into transforms. |
 | the view | `fleetless_turtle_viewer` | Subscribes like anybody else and serves the page. It only shows; nothing a browser sends changes anything. |
 | the bridge | `ros-jazzy-fleetless-bridge` | Fleetless's own package from its apt repository, started by its own launch file, unchanged. Only with a token. |
 
@@ -191,6 +209,9 @@ docker exec -it turtle ros2 topic list
 | `/turtle/status` | `fleetless_turtle_msgs/msg/TurtleStatus` | 10 Hz |
 | `/turtle/world` | `fleetless_turtle_msgs/msg/World` | latched |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | latched |
+| `/joint_states` | `sensor_msgs/msg/JointState` | 20 Hz |
+| `/robot_description` | `std_msgs/msg/String` | latched |
+| `/turtle/camera/top/image_raw`, `/turtle/camera/eye/image_raw` | `sensor_msgs/msg/Image`, `rgb8` | 10 Hz |
 
 **Which file to read first**, if you are here to see how a ROS 2 robot is
 wired to Fleetless:
@@ -208,6 +229,14 @@ wired to Fleetless:
 The other packages: `fleetless_turtle_msgs` holds the turtle's own messages,
 services and actions, and `fleetless_turtle_viewer` documents the view's
 WebSocket protocol in [its README](ros/fleetless_turtle_viewer/README.md).
+`fleetless_turtle_cameras` keeps its two renderers apart from its node:
+[`render/top.py`](ros/fleetless_turtle_cameras/fleetless_turtle_cameras/render/top.py)
+and [`render/eye.py`](ros/fleetless_turtle_cameras/fleetless_turtle_cameras/render/eye.py)
+are functions from a scene to a picture, without a line of ROS.
+`fleetless_turtle_description` is a plain
+[URDF](ros/fleetless_turtle_description/urdf/turtle.urdf) and six meshes,
+which [`tools/make_meshes.py`](tools/make_meshes.py) makes from ellipsoids.
+Nobody opened a modelling program.
 
 ## 🛑 What a simulator owes you in honesty
 
@@ -224,6 +253,17 @@ is real.
 **The odometry is exact.** The pose published is the pose simulated, and
 `map → odom` is the identity. No noise, no drift, no slip. A real robot is
 not this lucky.
+
+**The cameras are drawn, not filmed.** Both pictures are computed from the
+grid the laser reads: no lens, no noise, no light but a sun that never
+moves. `eye` casts one ray per column. It sees across water, which is flat,
+and over a rock to the wall behind it, and that is all the depth there is.
+A wall is 0.3 m tall and a rock 0.15 m for the eye only; to the turtle both
+block alike.
+
+**The legs are for show.** The turtle is a circle on two wheels. Its legs
+swing with the distance each wheel has rolled, and it would drive as well
+without them.
 
 **An empty range is reported in two ways.** A laser ray that hits nothing
 within 4 m is `inf` in `/scan`, as REP 117 asks, and the bridge sends that as
@@ -254,13 +294,13 @@ Everything CI runs, in Docker, so the host needs Docker and nothing else:
 
 ```sh
 ./run-tests.sh          # all of it
-./run-tests.sh unit     # the simulation core, plain pytest, no ROS
+./run-tests.sh unit     # the simulation core and the renderers, plain pytest, no ROS
 ```
 
 | Mode | What |
 |---|---|
 | `lint` | ruff, shellcheck, actionlint |
-| `unit` | the core, the shipped map against its script, the yaml against the simulator's numbers |
+| `unit` | the core, the cameras' renderers, the shipped map and the model's meshes against their scripts, the yaml against the simulator's numbers |
 | `ros` | `colcon build` and `colcon test` in ROS 2 Jazzy: the nodes on a real graph |
 | `yaml` | the yaml against the schema of `@fleetless/contracts`, and the release script |
 | `image` | builds the image, runs its smoke test, and brings `docker-compose.yaml` up against it |
