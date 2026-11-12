@@ -20,4 +20,13 @@ Vendored parts
 ==============
 
 Parts of other projects that are committed to this repository, each under
-its own license. Nothing is listed yet.
+its own license.
+
+three.js 0.186.1
+    Copyright (c) 2010-2026 three.js authors
+    MIT License, https://github.com/mrdoob/three.js
+    Files, unmodified from the npm package three@0.186.1:
+        ros/fleetless_turtle_viewer/web/vendor/three.module.js
+        ros/fleetless_turtle_viewer/web/vendor/three.core.js
+        ros/fleetless_turtle_viewer/web/vendor/OrbitControls.js
+    The license text is ros/fleetless_turtle_viewer/web/vendor/LICENSE.

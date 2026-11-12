@@ -1,0 +1,137 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The view of the turtle's world. Plain ES modules, no build step.
+
+  Everything this page loads sits beside it and is served by the viewer node:
+  no CDN, no web font, no tracker. The policy below makes the browser hold us
+  to that. 'unsafe-inline' is there for one script, the import map; ws: and
+  wss: are there because not every browser lets 'self' cover a WebSocket.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        img-src 'self' data:;
+        connect-src 'self' ws: wss:
+      "
+    />
+    <title>turtle-sim</title>
+    <!-- An inline icon, so the browser does not go looking for /favicon.ico. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='17' r='11' fill='%232f6f4f'/%3E%3Ccircle cx='16' cy='5' r='4' fill='%239bc37a'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./style.css" />
+    <!-- OrbitControls imports the bare name "three". This is where it lives. -->
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three.module.js" } }
+    </script>
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body data-view="connecting">
+    <canvas id="scene" aria-label="The turtle's world, seen from above at an angle."></canvas>
+
+    <p id="notice" role="status" aria-live="polite">Connecting.</p>
+    <p id="no-scene" class="fallback" hidden>
+      This browser offers no WebGL, so the world cannot be drawn. The numbers are live.
+    </p>
+
+    <aside id="panel" aria-label="The turtle's state">
+      <h1>
+        <!-- Drawn, not typed: not every machine has a font with a turtle in it. -->
+        <svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true">
+          <circle cx="16" cy="18" r="11" fill="#2f6f4f" />
+          <circle cx="16" cy="5.5" r="4.5" fill="#9bc37a" />
+        </svg>
+        turtle-sim
+      </h1>
+
+      <section aria-label="Battery">
+        <div class="row">
+          <span class="label">Battery</span>
+          <span class="value" id="battery">–</span>
+        </div>
+        <div class="bar" aria-hidden="true"><div id="battery-level"></div></div>
+        <p class="chips">
+          <span class="chip" id="chip-charging" hidden>charging</span>
+          <span class="chip" id="chip-on-charger" hidden>on the pad</span>
+          <span
+            class="chip warn"
+            id="chip-crawling"
+            title="The battery is empty. The speed limits are reduced until it is back at 5 %."
+            hidden
+            >crawling</span
+          >
+          <span
+            class="chip warn"
+            id="chip-bumper"
+            title="A move into an obstacle was refused within the last 0.2 s."
+            hidden
+            >bumper</span
+          >
+        </p>
+      </section>
+
+      <section aria-label="Pose">
+        <div class="row">
+          <span class="label">Cell</span>
+          <span class="value" id="cell">–</span>
+        </div>
+        <div class="row">
+          <span class="label">Square</span>
+          <span class="value" id="square">–</span>
+        </div>
+        <div class="row">
+          <span class="label">Heading</span>
+          <span class="value" id="heading">–</span>
+        </div>
+        <div class="row">
+          <span class="label">Speed</span>
+          <span class="value" id="speed">–</span>
+        </div>
+        <div class="row">
+          <span class="label">Mode</span>
+          <span class="value" id="mode">–</span>
+        </div>
+        <div class="row minor">
+          <span class="label">Driven</span>
+          <span class="value" id="odometer">–</span>
+        </div>
+        <div class="row minor">
+          <span class="label">Collisions</span>
+          <span class="value" id="collisions">–</span>
+        </div>
+      </section>
+
+      <section aria-label="Fleetless">
+        <div class="row">
+          <span class="label">Bridge</span>
+          <span class="value" id="bridge">–</span>
+        </div>
+        <p class="hint" id="bridge-hint"></p>
+        <p class="hint">
+          <a href="./fleetless.yaml" download="turtle.fleetless.yaml">fleetless.yaml</a>
+          is the configuration to publish in the console.
+        </p>
+      </section>
+
+      <section id="camera" aria-label="Camera">
+        <label class="switch">
+          <input type="checkbox" role="switch" id="follow" />
+          <span>Follow the turtle</span>
+        </label>
+        <button type="button" id="overview">Show the whole world</button>
+      </section>
+    </aside>
+
+    <noscript>
+      <p class="fallback">This view is drawn with JavaScript, and JavaScript is off.</p>
+    </noscript>
+  </body>
+</html>
