@@ -103,8 +103,13 @@ ranges are not.
 | `TURTLE_VIEW_PORT` | `8765` | The port the view listens on inside the container. For another port on your machine, change the left number of `-p`. |
 
 A value the turtle cannot use ends the container with one sentence that
-names it, and a non-zero exit code. The battery is not kept across a
-restart: a new container is full.
+names the variable and the value, and a non-zero exit code:
+
+```
+TURTLE_BATTERY_DRAIN (the parameter battery_drain) is "abc": the battery drain factor is a number of 0 or more.
+```
+
+The battery is not kept across a restart: a new container is full.
 
 **The map** is an 8-bit RGB PNG of exactly 256 × 256 pixels, one pixel per
 cell of 0.1 m, north up. Five colours and no other:

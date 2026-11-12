@@ -106,6 +106,8 @@ class World:
     def load(cls, path: str | Path) -> "World":
         """Read a map file: an 8-bit RGB PNG, one pixel per cell, north up."""
         path = Path(path)
+        if path.is_dir():
+            raise MapError(f"Map {path} is a directory: a map is one PNG file.")
         if not path.is_file():
             raise MapError(f"Map {path} does not exist.")
         image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)

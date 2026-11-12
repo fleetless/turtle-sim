@@ -56,7 +56,11 @@ LATCHED = QoSProfile(
 
 
 class Refusal(Exception):
-    """A start the node refuses. The message is one sentence for the user."""
+    """A start the node refuses. The message is one sentence for the user.
+
+    It names the environment variable before the parameter: whoever started
+    the container set the one and has never heard of the other.
+    """
 
 
 def _number(value: float, digits: int) -> float | None:
@@ -116,7 +120,8 @@ class ViewerNode(Node):
                 raise ValueError
         except (TypeError, ValueError):
             raise Refusal(
-                f'port is "{value}": the view listens on a whole number from 1 to 65535.'
+                f'TURTLE_VIEW_PORT (the parameter port) is "{value}": '
+                "the view listens on a whole number from 1 to 65535."
             ) from None
         return port
 
