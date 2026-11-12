@@ -16,6 +16,15 @@
 # a form that is safe at every moment.
 set -eo pipefail
 
+# An empty FLEETLESS_CLOUD_URL is an unset one. docker-compose.yaml names
+# every variable, and one that nobody set arrives here empty. The bridge
+# would take the empty text for the cloud's address; without the variable it
+# uses its own default. (An empty FLEETLESS_TOKEN needs no such line: both
+# the launch file and the bridge read it as no token.)
+if [ -z "${FLEETLESS_CLOUD_URL:-}" ]; then
+    unset FLEETLESS_CLOUD_URL
+fi
+
 if [ "$#" -gt 0 ]; then
     exec /opt/turtle/start.sh "$@"
 fi

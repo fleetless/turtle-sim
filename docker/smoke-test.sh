@@ -256,6 +256,29 @@ to_its_end "a container that may not start a process" "$name" --pids-limit 1 "$i
 grep -qF "fork" <<< "$said" || fail "a fork that failed is not named in the log: $said"
 pass "a container that may not start a process says so, exit $code"
 
+# --- An empty FLEETLESS_CLOUD_URL is an unset one -------------------------------
+# docker-compose.yaml passes the variable empty when nobody set it. The
+# bridge says at its start which cloud it will connect to: its own default
+# then, and the one it was given otherwise. The token is none and the
+# container has no network, so it reaches nobody while it says so.
+bridge_names_its_cloud() {
+    log=$(docker logs "$name" 2>&1) || return 1
+    grep -qE "Starting fleetless_bridge .*, cloud " <<< "$log"
+}
+for given in "" ws://cloud.invalid/bridge; do
+    docker run --detach --name "$name" --network none --env FLEETLESS_TOKEN=frt_not_a_token \
+        --env "FLEETLESS_CLOUD_URL=$given" "$image" > /dev/null
+    within 30 bridge_names_its_cloud || fail "with a token, the bridge did not say which cloud it connects to"
+    if [ -n "$given" ]; then
+        grep -qE ", cloud $given\$" <<< "$log" || fail "FLEETLESS_CLOUD_URL=$given did not reach the bridge"
+        pass "FLEETLESS_CLOUD_URL=$given reaches the bridge"
+    else
+        grep -qE ", cloud wss?://[^ ]+\$" <<< "$log" || fail "an empty FLEETLESS_CLOUD_URL reached the bridge as its cloud"
+        pass "an empty FLEETLESS_CLOUD_URL leaves the bridge its own default"
+    fi
+    remove
+done
+
 # --- A view port that is no port ----------------------------------------------
 to_its_end "a view port that is no port" "$name" --env TURTLE_VIEW_PORT=abc "$image"
 [ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
