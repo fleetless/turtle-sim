@@ -43,6 +43,10 @@ Ctrl-C stops the turtle and `docker compose down` removes it. `.env` is in
 `.gitignore`, so the token stays out of every commit. Any Docker Compose v2
 will do; Docker Desktop brings one.
 
+Compose keeps the turtle's state in a volume of its own, apart from the one
+line's `turtle-state`, so switching between the two leaves nothing behind but
+the bridge's record of jobs in flight.
+
 Without a token the simulator and the view run all the same; no bridge is
 started, and the log says so.
 
