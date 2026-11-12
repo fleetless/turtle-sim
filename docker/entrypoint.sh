@@ -44,12 +44,15 @@ turtle=$!
 [ -z "$stopping" ] || kill -USR1 "$turtle" 2> /dev/null || true
 
 # `wait` returns as soon as a stop arrives, with the turtle still on its way
-# down. So: wait until it is gone, then ask how it ended.
+# down. So: wait until it is gone, then ask how it ended. Whichever `wait`
+# finds the turtle ended by a signal would have bash announce it ("User
+# defined signal 1"); that is this script's own doing and nobody's news, so
+# the announcement goes nowhere. The status stays.
 while kill -0 "$turtle" 2> /dev/null; do
-    wait "$turtle" || true
+    wait "$turtle" 2> /dev/null || true
 done
 code=0
-wait "$turtle" || code=$?
+wait "$turtle" 2> /dev/null || code=$?
 
 # 138 is "ended by SIGUSR1": the stop came before the turtle listened.
 # Stopped on request is stopped, whenever the request came.
