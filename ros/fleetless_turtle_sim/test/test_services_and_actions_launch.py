@@ -4,8 +4,10 @@
 Each service with a call it accepts and, where it can refuse, one it
 refuses. Each action through the reasons a caller meets: `reached`,
 `unreachable`, `target_occupied`, `out_of_range`, `canceled`, `preempted`,
-`teleop_override`, a new plan after `set_block`, and a dock. The core's own
-tests walk every row of the reason table; these show that the rows arrive.
+`teleop_override`, `teleported`, `reset`, a new plan after `set_block`, and
+a dock that ends `charged`. The core's own tests walk every row of the
+reason table; these show that the rows arrive. Only `stuck` has no test
+here: it takes a turtle held by something the map does not show.
 """
 
 import itertools
@@ -266,10 +268,12 @@ class TestServicesAndActions(unittest.TestCase):
         self.assertAlmostEqual(points[0][1], centre(LANE_START)[1])
         for a, b in itertools.pairwise(points):
             self.assertAlmostEqual(math.dist(a, b), 0.1, delta=0.011)
-        # At most once a second.
-        arrivals = [arrived for arrived, _ in self.trail[-4:]]
-        for earlier, later in itertools.pairwise(arrivals):
-            self.assertGreater(later - earlier, 0.8)
+        # At most once a second, by the node's own stamps: when a message
+        # arrived says little about when it was sent.
+        published = [stamp(message) for _, message in self.trail[-4:]]
+        self.assertGreater(len(published), 2)
+        for earlier, later in itertools.pairwise(published):
+            self.assertGreater(later - earlier, 0.99)
 
         response = self.probe.call(SetBool, "/turtle/set_trail", data=False)
         self.assertTrue(response.success)
@@ -436,6 +440,33 @@ class TestServicesAndActions(unittest.TestCase):
         )
         self.assertEqual(self.next_status().mode, "teleop")
         self.until_status(lambda s: s.mode == "idle" and s.speed == 0.0)
+
+    def test_26b_a_teleport_and_a_reset_end_a_goal_and_a_declined_teleport_does_not(self):
+        sent = self.on_the_lane()
+        declined = self.probe.call(Teleport, "/turtle/teleport", x=2, y=100)
+        self.assertFalse(declined.success)
+        time.sleep(0.5)
+        self.assertFalse(sent.ended)
+        moved = self.probe.call(Teleport, "/turtle/teleport", x=40, y=24, heading_deg=90.0)
+        self.assertTrue(moved.success)
+        status, result = sent.result(timeout=5.0)
+        self.assertEqual(status, ABORTED)
+        self.assertEqual((result.success, result.reason), (False, "teleported"))
+        self.assertEqual(result.message, "The turtle was teleported on the way to cell (130, 30).")
+        self.assertEqual(result.cell_y, 30)  # where the goal ended, not where the turtle went
+        self.assert_standing()
+        self.assertEqual(self.next_status().cell_x, 40)
+
+        sent = self.probe.send(Dock, "/turtle/dock", target_percent=100.0)
+        self.until_status(lambda s: s.mode == "docking" and s.speed > 0.4)
+        self.assertTrue(self.probe.call(Trigger, "/turtle/reset").success)
+        status, result = sent.result(timeout=5.0)
+        self.assertEqual(status, ABORTED)
+        self.assertEqual((result.success, result.reason), (False, "reset"))
+        self.assertEqual(result.message, "The simulator was reset on the way to the charging pad.")
+        status = self.until_status(lambda s: (s.cell_x, s.cell_y) == (8, 8))
+        self.assertEqual(status.mode, "idle")
+        self.assertEqual(len(self.plan[-1][1].poses), 0)
 
     def test_27_a_block_on_the_path_makes_the_turtle_plan_again(self):
         plans = len(self.plan)

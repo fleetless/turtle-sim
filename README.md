@@ -152,7 +152,7 @@ seconds whether anybody watches or not, and video while somebody does.
 leads from cell (8, 8) to square N13.` One goal moves the turtle at a time,
 across all three actions. No goal stays open.
 
-| `reason` | The job | When |
+| `reason` | The goal ends | When |
 |---|---|---|
 | `reached` | succeeded | The turtle stands on the target. |
 | `charged` | succeeded | `dock`: the battery has reached `target_percent`. |
@@ -165,6 +165,10 @@ across all three actions. No goal stays open.
 | `teleported` | aborted | `teleport` moved the turtle. |
 | `reset` | aborted | `reset` was called. |
 | `canceled` | canceled | The caller cancelled. The turtle brakes, and stands within two seconds. |
+
+In Fleetless a goal that ends aborted is a `failed` job and one that ends
+canceled a `cancelled` one. The result, with its reason and its sentence, is
+on the job either way.
 
 ## 🗺️ Variables, and a map of your own
 
