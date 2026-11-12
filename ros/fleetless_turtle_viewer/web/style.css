@@ -1,0 +1,291 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/*
+ * The page is a canvas with a panel on top. Two colour schemes, chosen by the
+ * system; scene.js reads --sky so the 3D background matches.
+ */
+
+:root {
+  color-scheme: light dark;
+  --sky: #e9efe6;
+  --panel: rgba(255, 255, 255, 0.82);
+  --edge: rgba(40, 60, 45, 0.14);
+  --ink: #1f2a22;
+  --muted: #5d6b60;
+  --accent: #2f6f4f;
+  --track: rgba(40, 60, 45, 0.12);
+  --warn: #a2560a;
+  --warn-soft: rgba(196, 110, 20, 0.14);
+  --chip: rgba(47, 111, 79, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sky: #151c18;
+    --panel: rgba(24, 32, 27, 0.82);
+    --edge: rgba(220, 235, 222, 0.14);
+    --ink: #e6ece6;
+    --muted: #9aa89c;
+    --accent: #7fc79d;
+    --track: rgba(220, 235, 222, 0.14);
+    --warn: #f0b062;
+    --warn-soft: rgba(240, 176, 98, 0.16);
+    --chip: rgba(127, 199, 157, 0.16);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--sky);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The canvas owns its gestures: dragging orbits, it does not scroll. */
+  touch-action: none;
+}
+
+/* ---- the panel ---------------------------------------------------------- */
+
+#panel {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 264px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+#panel h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+#panel section {
+  padding: 10px 0;
+  border-top: 1px solid var(--edge);
+}
+
+#panel section:first-of-type {
+  border-top: 0;
+  padding-top: 6px;
+}
+
+#panel section:last-of-type {
+  padding-bottom: 2px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+.label {
+  color: var(--muted);
+}
+
+.value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+.row.minor .value {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.bar {
+  height: 6px;
+  margin: 6px 0 2px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+#battery-level {
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s linear;
+}
+
+#battery-level.low {
+  background: var(--warn);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  /* Room for one row even when it is empty: a chip that comes and goes with
+     every bump must not push the rest of the panel around. */
+  min-height: 27px;
+  margin: 0;
+}
+
+.chip {
+  margin-top: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.hint code {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.switch input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+button {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* No scene, no camera to steer. */
+body.no-scene #camera {
+  display: none;
+}
+
+/* What the panel shows is old news while nothing arrives. */
+body:not([data-view="live"]) #panel .value,
+body:not([data-view="live"]) #panel .chips,
+body:not([data-view="live"]) #panel .bar {
+  opacity: 0.45;
+}
+
+/* ---- the notice ---------------------------------------------------------- */
+
+#notice {
+  position: fixed;
+  top: 16px;
+  /* In the middle of the room beside the panel (16 + 264 px of it). */
+  left: calc(50% + 140px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 312px);
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-weight: 600;
+  text-align: center;
+}
+
+body[data-view="live"] #notice {
+  display: none;
+}
+
+body[data-view="lost"] #notice,
+body[data-view="quiet"] #notice {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.fallback {
+  position: fixed;
+  inset: 40% 16px auto;
+  text-align: center;
+}
+
+/* ---- small screens ------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  #notice {
+    left: 50%;
+    max-width: calc(100vw - 24px);
+  }
+
+  #panel {
+    top: auto;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    max-height: 46vh;
+  }
+
+  .row.minor {
+    display: none;
+  }
+}
