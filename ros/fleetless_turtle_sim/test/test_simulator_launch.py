@@ -6,6 +6,7 @@ shipped map, and `/cmd_vel`: it moves the turtle, and the turtle stands
 again once the commands stop.
 """
 
+import itertools
 import math
 import time
 import unittest
@@ -213,51 +214,84 @@ class TestSimulatorNode(unittest.TestCase):
         self.assertEqual(right.header.frame_id, "range_right")
 
     def test_5_cmd_vel_moves_the_turtle_and_it_stands_after_the_last_message(self):
+        """Six seconds of commands, judged by the odometry's own stamps.
+
+        Not by this test's clock: when a message was published or arrived
+        says little about when the turtle acted on it. Bounds: the pace
+        within 3 % and at most one gap over 90 ms between two stamps; one
+        thread keeps the pace within 0.5 % and leaves no gap over 56 ms,
+        rclpy's multi-threaded executor left three and more such gaps.
+        """
         publisher = self.probe.node.create_publisher(Twist, "/cmd_vel", 10)
         deadline = time.monotonic() + 10.0
         while publisher.get_subscription_count() == 0 and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertGreater(publisher.get_subscription_count(), 0)
 
-        start = self.latest_odometry().pose.pose.position.x
+        # A listener of this test's own, with room for every message of the
+        # drive: a gap in what it holds is then a gap in what was sent.
+        heard = self.probe.listen(Odometry, "/odom", qos=500)
+        Probe.until(heard, lambda _: True, what="/odom")
+
+        def stamp(message) -> float:
+            return message.header.stamp.sec + message.header.stamp.nanosec / 1e9
+
+        speed = 0.3
         forward = Twist()
-        forward.linear.x = 0.3
+        forward.linear.x = speed
         # Fields two wheels cannot follow are ignored.
         forward.linear.y = 5.0
         forward.angular.x = 5.0
-        first_message = time.monotonic()
-        for _ in range(40):  # two seconds at 20 Hz, or what the machine makes of it
+        for _ in range(120):  # six seconds at 20 Hz
             publisher.publish(forward)
             time.sleep(0.05)
-        last_message = time.monotonic()
+        last_command = time.time()
 
         moving = self.latest_status()
         self.assertEqual(moving.mode, "teleop")
-        self.assertAlmostEqual(moving.speed, 0.3, places=5)
+        self.assertAlmostEqual(moving.speed, speed, places=5)
         self.assertEqual(moving.turn_rate, 0.0)
 
-        # A command is good for half a second: 0.25 s after the last one the
-        # turtle still drives, and well within the next second it stands.
-        time.sleep(max(0.0, last_message + 0.25 - time.monotonic()))
-        self.assertGreater(self.latest_status().speed, 0.0)
-        standing = Probe.until(
-            self.status, lambda status: status.speed == 0.0, timeout=2.0, what="/turtle/status"
-        )
-        self.assertLess(time.monotonic() - last_message, 1.5)
-        self.assertEqual(standing.speed, 0.0)
-
-        time.sleep(0.3)
-        rest = self.latest_odometry().pose.pose.position.x
-        # Real time, whatever the machine: 0.3 m/s for as long as the commands
-        # came, and for the half second the last one stayed good. Speeding up
-        # loses what slowing down gains.
-        expected = 0.3 * (last_message - first_message + 0.5)
-        self.assertAlmostEqual(rest - start, expected, delta=0.2 * expected)
-        self.assertAlmostEqual(self.latest_odometry().pose.pose.position.y, 0.85)
+        # It stands again, and stays where it stopped.
+        Probe.until(heard, lambda odometry: odometry.twist.twist.linear.x == 0.0, timeout=5.0)
         time.sleep(0.5)
-        self.assertEqual(self.latest_odometry().pose.pose.position.x, rest)
+        drive = [message for _, message in heard]
+        start, rest = drive[0].pose.pose.position.x, drive[-1].pose.pose.position.x
+        self.assertEqual(drive[-2].pose.pose.position.x, rest)
+        self.assertAlmostEqual(drive[-1].pose.pose.position.y, 0.85)
         self.assertEqual(self.latest_status().mode, "idle")
-        self.assertGreater(self.latest_status().odometer_m, 0.5)
+        self.assertGreater(self.latest_status().odometer_m, 1.5)
+
+        # The stretch at the full commanded speed, by what the node stamped.
+        full = [m for m in drive if abs(m.twist.twist.linear.x - speed) < 1e-6]
+        self.assertGreater(len(full), 100, "the turtle hardly reached the commanded speed")
+        seconds = stamp(full[-1]) - stamp(full[0])
+        metres = full[-1].pose.pose.position.x - full[0].pose.pose.position.x
+        pace = metres / (speed * seconds)
+        gaps = [stamp(b) - stamp(a) for a, b in itertools.pairwise(full)]
+        long_gaps = [round(gap * 1000) for gap in gaps if gap > 0.09]
+        measured = (
+            f"pace {pace:.3f} over {seconds:.1f} s, longest gap between two odometry stamps "
+            f"{max(gaps) * 1000:.0f} ms, gaps over 90 ms: {long_gaps}"
+        )
+        print(f"test_5: {measured}")
+
+        # A command is good for half a second: the turtle keeps its speed
+        # that long after the last one, and stands 0.3 s later.
+        kept_speed_for = stamp(full[-1]) - last_command
+        self.assertGreater(kept_speed_for, 0.3, measured)
+        self.assertLess(kept_speed_for, 0.7, measured)
+        standing = next(
+            m for m in drive if stamp(m) > stamp(full[-1]) and m.twist.twist.linear.x == 0.0
+        )
+        self.assertLess(stamp(standing) - last_command, 1.1, measured)
+
+        # Real time: as far as the commanded speed takes it in the time the
+        # stamps span.
+        self.assertAlmostEqual(pace, 1.0, delta=0.03, msg=measured)
+        self.assertGreater(rest - start, speed * 5.5, measured)
+        # Steadily: twenty stamps a second, none much later than its turn.
+        self.assertLessEqual(len(long_gaps), 1, measured)
 
     def test_6_a_value_that_is_no_number_counts_as_zero_and_is_logged_once(self, proc_output):
         publisher = self.probe.node.create_publisher(Twist, "/cmd_vel", 10)
