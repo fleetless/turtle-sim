@@ -625,6 +625,32 @@ def test_a_cancel_at_any_moment_ends_within_two_seconds_with_the_turtle_standing
     assert seconds < 2.0 and standing(sim)
 
 
+@pytest.mark.parametrize("after", [0.0, 0.02, 0.2, 0.4])
+def test_a_new_goal_overtakes_a_cancel_that_is_still_braking_the_turtle(sim, after):
+    # A cancel is always accepted, and a new goal ends the running one. Where
+    # the two meet, the new goal is first: the turtle is still braking.
+    cancelled = driving(sim, sim.drive_to(120, 8))
+    cancelled.cancel()
+    wait(sim, after)
+    assert cancelled.result is None and sim.drive.linear > 0.0
+    following = sim.dock(100.0)
+    result = cancelled.result
+    assert (result.success, result.reason) == (False, "preempted")
+    assert result.message == "Another goal was accepted on the way to cell (120, 8)."
+    assert sim.goal is following
+    run(sim, following)
+    assert following.result.reason == "charged"
+
+
+def test_a_cancel_that_has_stopped_the_turtle_is_not_overtaken(sim):
+    cancelled = driving(sim, sim.drive_to(120, 8))
+    cancelled.cancel()
+    run(sim, cancelled, seconds=2.0)
+    assert cancelled.result.reason == "canceled"
+    following = sim.dock(100.0)
+    assert cancelled.result.reason == "canceled" and sim.goal is following
+
+
 def test_a_cancel_ends_a_crawling_turtle_as_quickly(sim):
     assert sim.teleport(100, 100, 0.0)[0]
     sim.battery.percent = 0.0

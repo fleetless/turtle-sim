@@ -389,6 +389,10 @@ services:
 #   teleported        `teleport` moved the turtle                   aborted
 #   reset             `reset` was called                            aborted
 #   canceled          the caller cancelled                          canceled
+#
+# A cancel takes the turtle up to half a second to obey: it brakes first. A
+# goal that is started in that time overtakes the cancel, and the goal that
+# was being cancelled ends `preempted`.
 actions:
   drive_to:
     ros_name: /turtle/drive_to
@@ -406,7 +410,9 @@ actions:
       unreachable, stuck, preempted (a drive_to_square or a dock was
       started), teleop_override (a `drive` command other than zero
       arrived), teleported, reset, canceled. A cancel brakes the turtle
-      and ends the goal within 2 s. A zero `drive` command ends nothing.
+      and ends the goal within 2 s. A goal that is started before the
+      turtle stands overtakes the cancel, and this one ends `preempted`.
+      A zero `drive` command ends nothing.
     message:
       x: ${cell_x}
       y: ${cell_y}
@@ -432,7 +438,8 @@ actions:
       A1. Everything else is as for drive_to: the same feedback, the same
       result, the same reasons, and `target_occupied` if the whole square
       is wall, rock or water. A drive_to or a dock that is started while
-      this runs ends it with `preempted`.
+      this runs ends it with `preempted`, also when a cancel of it is
+      still braking the turtle.
     message:
       square: ${square}
     parameters:
@@ -452,7 +459,9 @@ actions:
       (driving, charging), `battery_percent` and `remaining_m`. The result
       carries `success`, `reason`, a `message` of one sentence,
       `battery_percent` and `duration_s`. Reasons: charged, unreachable,
-      stuck, preempted, teleop_override, teleported, reset, canceled.
+      stuck, preempted, teleop_override, teleported, reset, canceled. A
+      goal that is started before a cancel of this one has stopped the
+      turtle overtakes the cancel, and this one ends `preempted`.
     message:
       target_percent: ${target_percent}
     parameters:
