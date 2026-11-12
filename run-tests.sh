@@ -45,8 +45,14 @@ run_lint() {
 }
 
 run_unit() {
-    echo "run-tests.sh: no unit tests yet." >&2
-    return 1
+    build_unit_image
+    # The core's own tests, and the ones that hold the repository together
+    # (the shipped map against its script). The same core tests run again
+    # under `ros`, there against Ubuntu's numpy and OpenCV.
+    docker run --rm --name "$NAME-unit" -v "$PWD:/src:ro" -w /src \
+        -e PYTHONPATH=/src/ros/fleetless_turtle_sim -e PYTHONDONTWRITEBYTECODE=1 \
+        "$IMAGE-unit" python -m pytest -q -p no:cacheprovider --import-mode=importlib \
+        ros/fleetless_turtle_sim/test/core test
 }
 
 run_ros() {
