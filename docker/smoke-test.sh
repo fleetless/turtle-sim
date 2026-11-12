@@ -163,6 +163,41 @@ for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
     remove
 done
 
+# --- The same stop, with the entrypoint held back --------------------------------
+# The delays above meet the job notice only now and then: bash prints it
+# when the turtle ends between two of the entrypoint's lines instead of
+# inside its `wait`, which takes a busy machine and luck. Here every line of
+# the container's shells takes 50 ms (a DEBUG trap, handed in through
+# BASH_ENV), so the turtle is still setting up its environment when the stop
+# comes, ends on the spot, and is long gone before the entrypoint reaches
+# its next line. That is the moment, every time.
+slow=$(mktemp)
+printf 'set -T\ntrap "sleep 0.05" DEBUG\n' > "$slow"
+chmod 644 "$slow"
+docker create --name "$name" --env BASH_ENV=/tmp/slow.sh "$image" > /dev/null
+docker cp --quiet "$slow" "$name:/tmp/slow.sh"
+rm -f "$slow"
+docker start "$name" > /dev/null
+sleep 2
+asked=$(date +%s%N)
+docker stop "$name" > /dev/null
+took_ms=$((($(date +%s%N) - asked) / 1000000))
+code=$(docker inspect --format '{{.State.ExitCode}}' "$name")
+if [ "$took_ms" -ge $((5000 * patience)) ] || [ "$code" -ne 0 ]; then
+    fail "docker stop with the entrypoint held back took $took_ms ms and the container exited $code"
+fi
+log=$(docker logs "$name" 2>&1)
+if grep -qE "User defined signal|entrypoint\.sh: line" <<< "$log"; then
+    fail "docker stop with the entrypoint held back left the shell's job notice"
+fi
+# A log with anything in it means the turtle was up already, and the stop
+# met another moment than the one this claim is about.
+if [ -n "$log" ]; then
+    fail "the entrypoint held back was not slow enough: the turtle had started before the stop came"
+fi
+pass "docker stop with the entrypoint held back: ended in $took_ms ms, exit $code, an empty log"
+remove
+
 # --- A view port that is no port ----------------------------------------------
 to_its_end "a view port that is no port" "$name" --env TURTLE_VIEW_PORT=abc "$image"
 [ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
