@@ -10,13 +10,15 @@
 #   ros     colcon build and colcon test in ROS 2 Jazzy
 #   yaml    the shipped fleetless.yaml against the contracts schema, and
 #           the release script's tests
-#   image   builds the image and runs its smoke test
+#   image   builds the image, runs its smoke test and brings
+#           docker-compose.yaml up against it
 #
 # Names, for a machine that is shared:
 #   TURTLE_TEST_IMAGE   image tag to build (default turtle-sim:test); the test
 #                       images are this name with -unit and -ros appended
 #   TURTLE_TEST_NAME    container name prefix (default turtle-sim-test)
-#   TURTLE_TEST_PORT    host port of the smoke test (default 8765)
+#   TURTLE_TEST_PORT    host port of the smoke test (default 8765); the
+#                       Compose file's test takes the one above it
 #   TURTLE_TEST_WS      a Docker volume that keeps the colcon workspace
 #                       between runs of `ros` (default: none, a clean build)
 set -euo pipefail
@@ -83,6 +85,10 @@ run_yaml() {
 run_image() {
     docker build -t "$IMAGE" .
     SMOKE_NAME="$NAME-smoke" SMOKE_PORT="${TURTLE_TEST_PORT:-8765}" docker/smoke-test.sh "$IMAGE"
+    # docker-compose.yaml against the same image, one port up: that test
+    # moves the view away from its own port, so it needs another.
+    COMPOSE_TEST_NAME="$NAME-compose" COMPOSE_TEST_PORT="$((${TURTLE_TEST_PORT:-8765} + 1))" \
+        docker/compose-test.sh "$IMAGE"
 }
 
 run() {

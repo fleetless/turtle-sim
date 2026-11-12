@@ -30,6 +30,19 @@ put `FLEETLESS_TOKEN=frt_...` into a file and pass that:
 docker run --rm -it --name turtle -p 127.0.0.1:8765:8765 -v turtle-state:/state --env-file turtle.env ghcr.io/fleetless/turtle-sim
 ```
 
+Or the same container by Docker Compose. Take
+[`docker-compose.yaml`](docker-compose.yaml) and [`.env.example`](.env.example)
+from this repository, copy `.env.example` to `.env`, write the token into
+it, and start it beside the two files:
+
+```sh
+docker compose up
+```
+
+Ctrl-C stops the turtle and `docker compose down` removes it. `.env` is in
+`.gitignore`, so the token stays out of every commit. Any Docker Compose v2
+will do; Docker Desktop brings one.
+
 Without a token the simulator and the view run all the same; no bridge is
 started, and the log says so.
 
@@ -94,13 +107,18 @@ ranges are not.
 
 ## 🗺️ Variables, and a map of your own
 
+Both ways of starting take the same five. `docker run` gets one as
+`-e NAME=value` or from `--env-file`. Compose reads it from the shell or from
+`.env`, and the shell wins; `docker-compose.yaml` lists them all and needs no
+editing.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `FLEETLESS_TOKEN` | — | The robot's token. Unset or empty: no bridge is started. |
 | `FLEETLESS_CLOUD_URL` | the bridge's own default | Passed through to the bridge. |
 | `TURTLE_MAP` | `/opt/turtle/maps/garden.png` | The map file. |
 | `TURTLE_BATTERY_DRAIN` | `1.0` | Factor on the battery's discharge. `0` turns it off. Charging is not scaled. |
-| `TURTLE_VIEW_PORT` | `8765` | The port the view listens on inside the container. For another port on your machine, change the left number of `-p`. |
+| `TURTLE_VIEW_PORT` | `8765` | The port the view listens on inside the container. For another port on your machine, change the left number of `-p`. With Compose the variable moves both sides, and the view is at that port on your machine too. |
 
 A value the turtle cannot use ends the container with one sentence that
 names the variable and the value, and a non-zero exit code:
@@ -130,6 +148,10 @@ Outside the picture everything blocks. Then mount it and name it:
 ```sh
 docker run --rm -it --name turtle -p 127.0.0.1:8765:8765 -v turtle-state:/state -v /path/to/my-map.png:/maps/my-map.png:ro -e TURTLE_MAP=/maps/my-map.png -e FLEETLESS_TOKEN=frt_... ghcr.io/fleetless/turtle-sim
 ```
+
+With Compose, `docker-compose.yaml` holds that mount as a commented line:
+uncomment it, give it your file's path, and set `TURTLE_MAP=/maps/my-map.png`
+in `.env`.
 
 This is the shipped one, `maps/garden.png`, drawn by
 [`tools/make_garden.py`](tools/make_garden.py), with the names of the squares:
@@ -237,7 +259,7 @@ Everything CI runs, in Docker, so the host needs Docker and nothing else:
 | `unit` | the core, the shipped map against its script, the yaml against the simulator's numbers |
 | `ros` | `colcon build` and `colcon test` in ROS 2 Jazzy: the nodes on a real graph |
 | `yaml` | the yaml against the schema of `@fleetless/contracts`, and the release script |
-| `image` | builds the image and runs its smoke test |
+| `image` | builds the image, runs its smoke test, and brings `docker-compose.yaml` up against it |
 
 ## 📄 License
 
