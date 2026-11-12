@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# The turtle by `docker compose up`: the same container as the one
+# `docker run` line in the README. The view is at http://localhost:8765.
+#
+# Every variable the container reads stands below, with its default. Set one
+# in the shell or in a file named `.env` beside this one, for which
+# `.env.example` is the template. Nobody has to edit this file.
+services:
+  turtle:
+    image: ghcr.io/fleetless/turtle-sim:latest
+    container_name: turtle
+    environment:
+      # The robot's token, from the console. Empty: no bridge is started.
+      FLEETLESS_TOKEN: ${FLEETLESS_TOKEN:-}
+      # The cloud the bridge connects to. Empty: the bridge's own default.
+      FLEETLESS_CLOUD_URL: ${FLEETLESS_CLOUD_URL:-}
+      # The map file, as the container sees it.
+      TURTLE_MAP: ${TURTLE_MAP:-/opt/turtle/maps/garden.png}
+      # Factor on the battery's discharge. 0 turns it off.
+      TURTLE_BATTERY_DRAIN: ${TURTLE_BATTERY_DRAIN:-1.0}
+      # The port the view listens on, in the container and on this machine.
+      TURTLE_VIEW_PORT: ${TURTLE_VIEW_PORT:-8765}
+    ports:
+      # The view, for this machine only.
+      - "127.0.0.1:${TURTLE_VIEW_PORT:-8765}:${TURTLE_VIEW_PORT:-8765}"
+    volumes:
+      # What outlives the container: which goal belongs to which job.
+      - turtle-state:/state
+      # A map of your own: mount it here and name it, TURTLE_MAP=/maps/my-map.png.
+      # - /path/to/my-map.png:/maps/my-map.png:ro
+
+volumes:
+  turtle-state:
