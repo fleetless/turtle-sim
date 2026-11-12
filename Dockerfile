@@ -17,6 +17,7 @@ FROM ros:jazzy-ros-base AS base
 COPY ros/fleetless_turtle_msgs/package.xml /tmp/manifests/fleetless_turtle_msgs/package.xml
 COPY ros/fleetless_turtle_sim/package.xml /tmp/manifests/fleetless_turtle_sim/package.xml
 COPY ros/fleetless_turtle_viewer/package.xml /tmp/manifests/fleetless_turtle_viewer/package.xml
+COPY ros/fleetless_turtle_cameras/package.xml /tmp/manifests/fleetless_turtle_cameras/package.xml
 COPY ros/fleetless_turtle_bringup/package.xml /tmp/manifests/fleetless_turtle_bringup/package.xml
 # Everything but the test dependencies. The bridge is no rosdep key; it is
 # installed below.
