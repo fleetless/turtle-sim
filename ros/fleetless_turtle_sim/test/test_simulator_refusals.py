@@ -7,6 +7,8 @@ over, and a request to stop.
 
 import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -78,38 +80,51 @@ def test_a_battery_drain_that_is_negative_or_no_number(value):
     assert sentence.endswith("the battery drain factor is a number of 0 or more.")
 
 
-@pytest.mark.parametrize("value", ["0.5", "2", "0", "'0.25'"])
-def test_a_battery_drain_of_any_usable_type_starts_and_a_signal_ends_it(value):
+def started(*parameters: str) -> tuple[subprocess.Popen, list[str]]:
+    """Start the node and wait until it says where the turtle is.
+
+    Not for a fixed time: the node's start takes four seconds on one busy
+    core, and a signal during its imports ends it at once and quietly, which
+    is right, and not what these tests are after.
+    """
     process = subprocess.Popen(
-        simulator(f"map:={GARDEN}", f"battery_drain:={value}"),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
+        simulator(*parameters), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
+    lines = []
+    reader = threading.Thread(target=lambda: lines.extend(process.stdout), daemon=True)
+    reader.start()
+    deadline = time.monotonic() + 60.0
+    while not any("The turtle is on the pad, cell (8, 8)" in line for line in lines):
+        assert process.poll() is None, "".join(lines)
+        assert time.monotonic() < deadline, "".join(lines)
+        time.sleep(0.05)
+    return process, lines
+
+
+def stopped(process: subprocess.Popen, lines: list[str], how: signal.Signals) -> str:
+    """Send the signal, wait for the end and return everything the node said."""
+    time.sleep(0.5)
+    assert process.poll() is None, "".join(lines)  # it keeps running until told
+    process.send_signal(how)
     try:
-        with pytest.raises(subprocess.TimeoutExpired):
-            process.wait(timeout=3.0)  # it keeps running
-        process.send_signal(signal.SIGINT)
-        said, _ = process.communicate(timeout=10.0)
+        process.wait(timeout=20.0)
     finally:
         if process.poll() is None:
             process.kill()
+    time.sleep(0.2)  # the reader takes the last lines
+    return "".join(lines)
+
+
+@pytest.mark.parametrize("value", ["0.5", "2", "0", "'0.25'"])
+def test_a_battery_drain_of_any_usable_type_starts_and_a_signal_ends_it(value):
+    process, lines = started(f"map:={GARDEN}", f"battery_drain:={value}")
+    said = stopped(process, lines, signal.SIGINT)
     assert process.returncode == 0, said
     assert "Traceback" not in said, said
-    assert "The turtle is on the pad, cell (8, 8)" in said
 
 
 def test_sigterm_ends_it_too():
-    process = subprocess.Popen(
-        simulator(f"map:={GARDEN}"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
-    try:
-        with pytest.raises(subprocess.TimeoutExpired):
-            process.wait(timeout=3.0)
-        process.send_signal(signal.SIGTERM)
-        said, _ = process.communicate(timeout=10.0)
-    finally:
-        if process.poll() is None:
-            process.kill()
+    process, lines = started(f"map:={GARDEN}")
+    said = stopped(process, lines, signal.SIGTERM)
     assert process.returncode == 0, said
     assert "Traceback" not in said, said
