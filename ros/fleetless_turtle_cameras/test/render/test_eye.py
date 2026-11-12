@@ -303,6 +303,56 @@ def test_an_eye_outside_the_grid_sees_the_colour_of_outside(kinds):
     assert (picture == look.OUTSIDE).all()
 
 
+# --- Whatever the node lets through is drawn ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "columns"),
+    [(1, 1), (1, 300), (300, 1), (look.WORLD_CELLS_LIMIT, look.WORLD_CELLS_LIMIT)],
+    ids=["one cell", "one row", "one column", "the largest"],
+)
+def test_a_world_of_any_size_the_node_takes_is_drawn(rows, columns):
+    cells = np.full((rows, columns), c.FREE, np.uint8)
+    east = eye.render(Scene(cells, *cell_centre(0, 0), EAST))
+    north = eye.render(Scene(cells, *cell_centre(0, 0), NORTH))
+    assert east.shape == north.shape == (240, 320, 3)
+    edge = lit(look.OUTSIDE, eye.WEST)
+    # Looking along a side that is one cell long, the world's edge is
+    # 0.05 m ahead and fills the picture. Along a longer one there is lawn
+    # ahead, and the edge runs beside the turtle to the horizon.
+    if columns == 1:
+        assert is_like(east, edge).all()
+    else:
+        assert is_like(east[HEIGHT - 1, MIDDLE - 20 : MIDDLE + 20], look.LAWN, 0.1).all()
+        assert not is_like(east[HORIZON - 30, MIDDLE - 2 : MIDDLE + 2], edge).any()
+    if rows == 1:
+        assert is_like(north, lit(look.OUTSIDE, eye.SOUTH)).all()
+    else:
+        assert is_like(north[HEIGHT - 1, MIDDLE - 20 : MIDDLE + 20], look.LAWN, 0.1).all()
+
+
+def test_kinds_the_simulator_does_not_know_are_floor(kinds):
+    open_floor = eye.render(scene_at(kinds, cx=128, cy=128))
+    kinds[120:137, 138:140] = 9  # one metre ahead, where a wall would fill the view
+    assert is_like(eye.render(scene_at(kinds, cx=128, cy=128))[HORIZON:], look.LAWN, 0.5).all()
+    assert np.array_equal(
+        eye.render(scene_at(kinds, cx=128, cy=128))[:HORIZON], open_floor[:HORIZON]
+    )
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "heading"),
+    [
+        (look.POSE_LIMIT_M, look.POSE_LIMIT_M, 0.0),
+        (-look.POSE_LIMIT_M, look.POSE_LIMIT_M, 1e300),
+        (look.POSE_LIMIT_M, -look.POSE_LIMIT_M, -1e300),
+        (-look.POSE_LIMIT_M, -look.POSE_LIMIT_M, 4.0),
+    ],
+)
+def test_at_the_bound_of_what_the_node_takes_the_eye_sees_outside(kinds, x, y, heading):
+    assert (eye.render(Scene(kinds, x, y, heading)) == look.OUTSIDE).all()
+
+
 # --- Against the core's laser ------------------------------------------------
 
 
@@ -383,3 +433,25 @@ def test_ten_frames_a_second_of_both_stay_below_a_quarter_of_one_core(garden):
     per_frame = (time.process_time() - started) / frames
     print(f"top and eye together: {per_frame * 1000:.1f} ms of processor time a frame")
     assert per_frame < 0.25 / look.FRAME_RATE_HZ
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "where"),
+    [(12.8, 12.8, "in the middle of the world"), (0.85, 0.85, "in its corner, on the pad")],
+)
+def test_top_costs_a_window_cut_from_a_picture_and_little_more(garden, x, y, where):
+    """Ten times less than the eye: the world is drawn once, a frame is a copy of a part.
+
+    About 0.2 ms here, also where the window reaches past the world and
+    begins as a picture of nothing. Filling that picture anew for every
+    frame took 2 ms.
+    """
+    frames = 200
+    scenes = [Scene(garden.kinds, x + 0.001 * i, y, 0.07 * i) for i in range(frames)]
+    top.render(scenes[0])
+    started = time.process_time()
+    for scene in scenes:
+        top.render(scene)
+    per_frame = (time.process_time() - started) / frames
+    print(f"top, {where}: {per_frame * 1000:.2f} ms of processor time a frame")
+    assert per_frame < 0.0015

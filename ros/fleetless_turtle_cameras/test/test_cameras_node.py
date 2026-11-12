@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """The cameras node alone, against a turtle this test plays itself.
 
-What it does before it knows the world, with a world it cannot draw and
-with a pose that is no number, and how it ends when it is asked to.
+What it does before it knows the world, with a world it cannot draw, with a
+pose that is no place and a path that leads to none, and how it ends when
+it is asked to. Whatever arrives, the node goes on: each refusal is one
+line in its log, and no stack trace.
 """
 
 import math
@@ -10,14 +12,15 @@ import signal
 import subprocess
 import threading
 import time
-from pathlib import Path
+from pathlib import Path as FilePath
 
 import numpy as np
 import pytest
 import rclpy
 from ament_index_python.packages import get_package_prefix
 from fleetless_turtle_msgs.msg import World
-from nav_msgs.msg import Odometry
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry, Path
 from probe import Probe
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
@@ -25,7 +28,8 @@ from sensor_msgs.msg import Image
 from fleetless_turtle_cameras.render import constants as look
 
 CAMERAS = (
-    Path(get_package_prefix("fleetless_turtle_cameras")) / "lib/fleetless_turtle_cameras/cameras"
+    FilePath(get_package_prefix("fleetless_turtle_cameras"))
+    / "lib/fleetless_turtle_cameras/cameras"
 )
 TOP = "/turtle/camera/top/image_raw"
 EYE = "/turtle/camera/eye/image_raw"
@@ -79,6 +83,16 @@ def odometry_at(x: float, y: float, heading: float = 0.0) -> Odometry:
     odometry.pose.pose.orientation.z = math.sin(heading / 2)
     odometry.pose.pose.orientation.w = math.cos(heading / 2)
     return odometry
+
+
+def path_through(*points: tuple[float, float]) -> Path:
+    path = Path()
+    path.header.frame_id = "map"
+    for x, y in points:
+        pose = PoseStamped()
+        pose.pose.position.x, pose.pose.position.y = x, y
+        path.poses.append(pose)
+    return path
 
 
 def picture_of(image: Image) -> np.ndarray:
@@ -144,6 +158,46 @@ def test_a_world_with_the_wrong_number_of_cells_is_not_drawn_and_logged_once(pro
     probe.node.destroy_publisher(world)
 
 
+def test_a_world_without_cells_is_not_drawn_and_logged_once(probe, cameras):
+    """Five wide and nothing high: its count fits its size, and there is nothing to draw."""
+    process, lines = cameras
+    top = probe.listen(Image, TOP)
+    world = probe.node.create_publisher(World, "/turtle/world", LATCHED)
+    found_by(world)
+    for width, height in ((5, 0), (0, 5), (0, 0)):
+        empty = World()
+        empty.width, empty.height = width, height
+        world.publish(empty)
+        time.sleep(0.4)
+    said = "".join(lines)
+    assert said.count("A /turtle/world of 5 x 0 cells has none. It is not drawn.") == 1, said
+    # Once for the sort of fault, not once for every size it comes in.
+    assert said.count("cells has none.") == 1, said
+    assert len(top) == 0
+    assert process.poll() is None, said
+    probe.node.destroy_publisher(world)
+
+
+def test_a_world_larger_than_the_cameras_draw_is_refused_and_logged_once(probe, cameras):
+    process, lines = cameras
+    top = probe.listen(Image, TOP)
+    world = probe.node.create_publisher(World, "/turtle/world", LATCHED)
+    found_by(world)
+    side = look.WORLD_CELLS_LIMIT + 1
+    for _ in range(2):
+        world.publish(world_of(np.zeros((side, 1), np.uint8)))
+        time.sleep(0.4)
+    said = "".join(lines)
+    warning = (
+        f"A /turtle/world of 1 x {side} cells is more than the cameras draw, "
+        f"{look.WORLD_CELLS_LIMIT} along a side. It is not drawn."
+    )
+    assert said.count(warning) == 1, said
+    assert len(top) == 0
+    assert process.poll() is None, said
+    probe.node.destroy_publisher(world)
+
+
 def test_a_world_of_any_size_is_drawn_once_world_and_pose_are_known(probe, cameras):
     top = probe.listen(Image, TOP)
     eye = probe.listen(Image, EYE)
@@ -169,19 +223,90 @@ def test_a_world_of_any_size_is_drawn_once_world_and_pose_are_known(probe, camer
     assert np.abs(ahead[horizon, look.EYE_WIDTH_PX // 2].astype(int) - look.WALL).max() < 30
 
 
-def test_a_pose_that_is_no_number_is_not_taken(probe, cameras):
+def test_a_pose_no_picture_can_be_drawn_from_is_not_taken_and_logged_once(probe, cameras):
+    process, lines = cameras
     top = probe.listen(Image, TOP)
     odometry = probe.node.create_publisher(Odometry, "/odom", 10)
     found_by(odometry)
-    for x, y in ((math.nan, 3.25), (3.25, math.inf)):
+    # The largest number there is, which no pixel can hold; just past the
+    # bound; and what is no number at all, as a place and as a heading.
+    beyond = look.POSE_LIMIT_M + 0.5
+    for x, y in ((1e308, 3.25), (3.25, -beyond), (math.nan, 3.25), (3.25, math.inf)):
         odometry.publish(odometry_at(x, y))
+        time.sleep(0.2)
+    turned_nowhere = odometry_at(3.25, 3.25)
+    turned_nowhere.pose.pose.orientation.w = math.nan
+    odometry.publish(turned_nowhere)
     time.sleep(0.5)
+
     middle = look.TOP_SIZE_PX // 2
     seen = picture_of(Probe.until(top, lambda _: True, what=TOP))
     # Still the picture from where the turtle was last known to be.
     assert (seen[middle, middle + 42] == look.WALL).all()
+    said = "".join(lines)
+    assert process.poll() is None, said
+    warning = (
+        "An /odom pose of x 1e+308 m, y 3.25 m, heading 0 rad is not taken: the cameras draw "
+        f"from numbers, up to {look.POSE_LIMIT_M:g} m from the map's origin. This is logged once."
+    )
+    assert said.count(warning) == 1, said
+    assert said.count("is not taken") == 1, said
+
+
+def test_a_pose_on_the_bound_is_a_place(probe, cameras):
     process, lines = cameras
+    top = probe.listen(Image, TOP)
+    eye = probe.listen(Image, EYE)
+    odometry = probe.node.create_publisher(Odometry, "/odom", 10)
+    found_by(odometry)
+    middle = look.TOP_SIZE_PX // 2
+    try:
+        odometry.publish(odometry_at(look.POSE_LIMIT_M, -look.POSE_LIMIT_M, heading=2.0))
+        # Far outside this small world: the turtle in the middle of nothing.
+        far = picture_of(
+            Probe.until(
+                top, lambda image: (picture_of(image)[middle, middle + 42] == look.OUTSIDE).all()
+            )
+        )
+        assert (far[0, 0] == look.OUTSIDE).all() and (far[-1, -1] == look.OUTSIDE).all()
+        centre = far[middle - 1 : middle + 1, middle - 1 : middle + 1]
+        assert (centre == look.TURTLE_SHELL_TOP).all(axis=2).any()
+        outside = picture_of(
+            Probe.until(eye, lambda image: (picture_of(image) == look.OUTSIDE).all())
+        )
+        assert outside.shape == (240, 320, 3)
+    finally:
+        odometry.publish(odometry_at(3.25, 3.25))
+    Probe.until(top, lambda image: (picture_of(image)[middle, middle + 42] == look.WALL).all())
     assert process.poll() is None, "".join(lines)
+
+
+def test_a_point_of_a_path_that_cannot_be_drawn_is_left_out(probe, cameras):
+    process, lines = cameras
+    top = probe.listen(Image, TOP)
+    plan = probe.node.create_publisher(Path, "/turtle/plan", LATCHED)
+    trail = probe.node.create_publisher(Path, "/turtle/trail", LATCHED)
+    found_by(plan)
+    found_by(trail)
+    points = ((3.25, 3.25), (1e308, 3.25), (math.nan, math.nan), (3.25, -1e9), (4.0, 3.25))
+    plan.publish(path_through(*points))
+    trail.publish(path_through(*points))
+
+    middle = look.TOP_SIZE_PX // 2
+
+    def drawn(image) -> bool:
+        return bool((picture_of(image)[middle, middle + 24] == look.PLAN).all())
+
+    # What is left is one leg, from the turtle to the last point, 0.75 m east of it.
+    seen = picture_of(Probe.until(top, drawn, what=TOP))
+    path = (seen == look.PLAN).all(axis=2)
+    rows, columns = np.nonzero(path)
+    assert (
+        columns.max() < middle + 30 + 10 and rows.min() > middle - 10 and rows.max() < middle + 10
+    )
+    assert process.poll() is None, "".join(lines)
+    probe.node.destroy_publisher(plan)
+    probe.node.destroy_publisher(trail)
 
 
 @pytest.mark.parametrize("how", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])

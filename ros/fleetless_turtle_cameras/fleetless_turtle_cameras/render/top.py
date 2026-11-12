@@ -6,7 +6,8 @@ cells by their kind with a hint of height, the lines between the squares and
 their names, the pad, then the trail, the path, the target and the turtle.
 
 The world is drawn once, whole, and kept until a cell changes. A picture is
-then a window cut from it with the few things that move drawn on top.
+then a window cut from it with the few things that move drawn on top. Where
+the window reaches past the world, the picture is the colour of outside.
 """
 
 import math
@@ -33,12 +34,14 @@ SCALE = round(CELL_SIZE_M * look.TOP_SIZE_PX / look.TOP_WINDOW_M)
 
 PX_PER_M = SCALE / CELL_SIZE_M
 
-MARGIN = look.TOP_SIZE_PX // 2 + 1
-"""Around the world's picture, so a window never reaches past it."""
-
 # OpenCV draws between pixels when it is given sixteenths of one.
 SHIFT = 4
 SIXTEENTHS = 1 << SHIFT
+
+# A picture of nothing but outside, to begin a window with that reaches past
+# the world. Kept, because filling one costs ten times what copying it does.
+_NOTHING = np.empty((look.TOP_SIZE_PX, look.TOP_SIZE_PX, 3), np.uint8)
+_NOTHING[:] = look.OUTSIDE
 
 # A lightning bolt, the usual sign for "charge here": the view's, in a
 # square from (0, 0) top left to (1, 1).
@@ -54,18 +57,17 @@ def render(scene: Scene) -> np.ndarray:
     north_edge_m = scene.kinds.shape[0] * CELL_SIZE_M
 
     # Where the turtle is in the world's picture, whose rows count from the
-    # north. The window is cut on whole pixels around it.
-    turtle_column = MARGIN + scene.x * PX_PER_M
-    turtle_row = MARGIN + (north_edge_m - scene.y) * PX_PER_M
-    left = min(max(round(turtle_column) - size // 2, 0), world.shape[1] - size)
-    top = min(max(round(turtle_row) - size // 2, 0), world.shape[0] - size)
-    picture = world[top : top + size, left : left + size].copy()
+    # north. The window is cut on whole pixels around it, wherever it is:
+    # a turtle far outside the world is the middle of a picture of nothing.
+    left = round(scene.x * PX_PER_M) - size // 2
+    top = round((north_edge_m - scene.y) * PX_PER_M) - size // 2
+    picture = _window(world, top, left, size)
 
     def pixels(points) -> np.ndarray:
         """Metres to where OpenCV draws: sixteenths of a pixel, whole pixels at their centres."""
         points = np.asarray(points, dtype=float).reshape(-1, 2)
-        columns = MARGIN + points[:, 0] * PX_PER_M - left - 0.5
-        rows = MARGIN + (north_edge_m - points[:, 1]) * PX_PER_M - top - 0.5
+        columns = points[:, 0] * PX_PER_M - left - 0.5
+        rows = (north_edge_m - points[:, 1]) * PX_PER_M - top - 0.5
         return np.rint(np.stack([columns, rows], axis=1) * SIXTEENTHS).astype(np.int32)
 
     def length(metres: float) -> int:
@@ -94,6 +96,23 @@ def render(scene: Scene) -> np.ndarray:
         )
 
     _draw_turtle(picture, scene, pixels, length)
+    return picture
+
+
+def _window(world: np.ndarray, top: int, left: int, size: int) -> np.ndarray:
+    """A square cut from the world's picture. What it shows past the picture is outside."""
+    rows, columns = world.shape[:2]
+    first_row, past_row = max(top, 0), min(top + size, rows)
+    first_column, past_column = max(left, 0), min(left + size, columns)
+    if (past_row - first_row, past_column - first_column) == (size, size):
+        # All of it lies in the world, as it does wherever the turtle is
+        # more than half a window from the world's edge: one copy.
+        return world[first_row:past_row, first_column:past_column].copy()
+    picture = _NOTHING.copy()
+    if first_row < past_row and first_column < past_column:
+        picture[first_row - top : past_row - top, first_column - left : past_column - left] = world[
+            first_row:past_row, first_column:past_column
+        ]
     return picture
 
 
@@ -132,7 +151,7 @@ def _enlarge(cells: np.ndarray) -> np.ndarray:
 
 
 def _draw_world(kinds: np.ndarray) -> np.ndarray:
-    """The whole world, north up, with a margin of what lies outside around it."""
+    """The whole world, north up."""
     north_up = np.flipud(kinds)
     picture = _enlarge(np.flipud(cell_colours(kinds)))
     _draw_squares(picture)
@@ -148,12 +167,7 @@ def _draw_world(kinds: np.ndarray) -> np.ndarray:
     )
     _cast_shadows(picture, reach)
     _draw_blocks(picture, north_up, reach)
-
-    rows, columns = picture.shape[:2]
-    framed = np.empty((rows + 2 * MARGIN, columns + 2 * MARGIN, 3), np.uint8)
-    framed[:] = look.OUTSIDE
-    framed[MARGIN : MARGIN + rows, MARGIN : MARGIN + columns] = picture
-    return framed
+    return picture
 
 
 _world = Remembered(_draw_world)
