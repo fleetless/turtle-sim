@@ -520,6 +520,66 @@ class TestServicesAndActions(unittest.TestCase):
         self.assertEqual((status.cell_x, status.cell_y, status.on_charger), (8, 8, True))
         self.assert_standing()
 
+    def test_28b_a_late_subscriber_hears_the_path_and_the_trail_and_a_path_ends_on_its_target(self):
+        """What the cameras node counts on. It subscribes to both paths as
+        latched topics whenever it starts, draws the last pose of the path
+        as the target, and takes an empty path for "no goal"."""
+
+        def late(topic):
+            """What a subscriber that joins now is told, without anything new being published."""
+            heard = self.probe.listen(PathMsg, topic, qos=LATCHED)
+            return Probe.newest(heard, lambda _: True, 5.0, f"{topic}, joined late")
+
+        def last_point(path):
+            return path.poses[-1].pose.position.x, path.poses[-1].pose.position.y
+
+        self.assertEqual(len(late("/turtle/plan").poses), 0)  # no goal, no path
+        self.assertEqual(len(late("/turtle/trail").poses), 0)  # the trail is off
+
+        # A drive into a square: the path ends on the cell the turtle chose.
+        self.teleport(LANE_START)
+        self.assertTrue(self.probe.call(SetBool, "/turtle/set_trail", data=True).success)
+        published = len(self.plan)
+        sent = self.probe.send(DriveToSquare, "/turtle/drive_to_square", square="H2")
+        self.at_full_speed()
+        time.sleep(1.5)
+        self.assertEqual(len(self.plan), published + 1)  # planned once, published once
+        plan = late("/turtle/plan")
+        self.assertEqual(plan.header.frame_id, "map")
+        self.assertEqual(len(plan.poses), 2)
+        self.assertAlmostEqual(plan.poses[0].pose.position.x, centre(LANE_START)[0])
+        for got, expected in zip(last_point(plan), centre((119, 23)), strict=True):
+            self.assertAlmostEqual(got, expected)
+
+        # The trail, once the turtle stands and nothing more is published.
+        self.assertEqual(sent.cancel().return_code, 0)
+        status, result = sent.result(timeout=5.0)
+        self.assertEqual((status, result.reason), (CANCELED, "canceled"))
+        self.assertEqual(result.message, "The goal was cancelled on the way to square H2.")
+        self.assert_standing()
+        time.sleep(1.5)
+        published = len(self.trail)
+        trail = late("/turtle/trail")
+        self.assertEqual(len(self.trail), published)  # told from the latch, not from a new message
+        self.assertEqual(trail.header.frame_id, "map")
+        self.assertGreater(len(trail.poses), 5)
+        self.assertAlmostEqual(trail.poses[0].pose.position.x, centre(LANE_START)[0])
+        self.assertAlmostEqual(trail.poses[0].pose.position.y, centre(LANE_START)[1])
+        odometry = self.next_odometry()
+        self.assertAlmostEqual(last_point(trail)[0], odometry.pose.pose.position.x, delta=0.11)
+        self.assertEqual(len(late("/turtle/plan").poses), 0)  # the goal ended: no path
+
+        # A dock: the path ends on the pad's start cell.
+        sent = self.probe.send(Dock, "/turtle/dock", target_percent=100.0)
+        self.until_status(lambda s: s.mode == "docking" and s.speed > 0.4)
+        plan = late("/turtle/plan")
+        self.assertGreaterEqual(len(plan.poses), 2)
+        for got, expected in zip(last_point(plan), centre((8, 8)), strict=True):
+            self.assertAlmostEqual(got, expected)
+        self.assertEqual(sent.cancel().return_code, 0)
+        self.assertEqual(sent.result(timeout=5.0)[1].reason, "canceled")
+        self.assertEqual(len(late("/turtle/plan").poses), 0)
+
     def test_29_the_turtle_keeps_its_pace_while_a_goal_runs(self):
         """The drive of test_5 in the other launch test, driven by a goal.
 
