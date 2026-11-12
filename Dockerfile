@@ -69,7 +69,7 @@ COPY --from=build /opt/turtle/install /opt/turtle/install
 COPY maps /opt/turtle/maps
 # The configuration to publish in the console; the view hands it out.
 COPY fleetless /opt/turtle/fleetless
-COPY docker/environment.sh docker/entrypoint.sh /opt/turtle/
+COPY docker/environment.sh docker/entrypoint.sh docker/start.sh docker/launcher.py /opt/turtle/
 # `docker exec -it turtle ros2 topic list` finds this one first.
 COPY docker/ros2 /usr/local/bin/ros2
 
@@ -94,8 +94,9 @@ LABEL org.opencontainers.image.title="turtle-sim" \
       org.opencontainers.image.revision="${REVISION}" \
       dev.fleetless.bridge.version="${BRIDGE_VERSION}"
 
-# `docker stop` sends this. `ros2 launch` takes an interrupt as a request to
-# stop its nodes one by one, and has no ear for SIGTERM at all.
+# `docker stop` sends this, the same signal as Ctrl-C. The entrypoint hears
+# it, and SIGTERM as well, from its first lines on, and stops the nodes one
+# by one.
 STOPSIGNAL SIGINT
 
 ENTRYPOINT ["/opt/turtle/entrypoint.sh"]

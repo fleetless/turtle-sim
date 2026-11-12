@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # `docker exec -it turtle ros2 topic list` lands here: ros2 with the turtle's
 # environment, so nobody sources anything by hand.
+# Should this ever be a container's first process: a stop before `ros2`
+# itself takes over is heard.
+trap 'exit 130' INT TERM
 # shellcheck source=/dev/null
 source /opt/turtle/environment.sh
 exec "/opt/ros/$ROS_DISTRO/bin/ros2" "$@"

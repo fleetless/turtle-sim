@@ -1,43 +1,59 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# What the container runs. Without arguments: the launch file. With
-# arguments: that command, in the turtle's ROS environment.
+# The container's first process.
 #
-# A bridge checkout mounted at /bridge-src is built first and runs in place
-# of the installed package. That is how an unreleased bridge is tried:
+# Without arguments it starts the turtle beside itself and waits for it: the
+# launch file with the simulator, the view and, with a token, the bridge.
+# With arguments it runs that command in the turtle's ROS environment.
 #
-#   docker run ... -v /path/to/bridge:/bridge-src:ro ghcr.io/fleetless/turtle-sim
+# It stays the first process for one reason: a stop. `docker stop` and
+# Ctrl-C send a signal to the first process and to nobody else, and a first
+# process only gets the signals it has asked for. Python needs a second or
+# two before it has asked: it is importing ROS. Handed the place too early,
+# it either never hears the stop, and Docker kills the container ten seconds
+# later, or it answers with a stack trace. So this shell keeps the place,
+# hears SIGINT and SIGTERM from the lines below on, and passes a stop on in
+# a form that is safe at every moment.
 set -eo pipefail
 
-BRIDGE_SRC=/bridge-src
-
-if [ -e "$BRIDGE_SRC" ]; then
-    if [ ! -f "$BRIDGE_SRC/package.xml" ]; then
-        echo "entrypoint: $BRIDGE_SRC holds no package.xml. Mount a checkout of the bridge there." >&2
-        exit 1
-    fi
-    # shellcheck source=/dev/null
-    source "/opt/ros/$ROS_DISTRO/setup.bash"
-    installed="$(dpkg-query -W -f='${Version}' "ros-$ROS_DISTRO-fleetless-bridge" 2> /dev/null || echo "none")"
-    echo "entrypoint: building the bridge from $BRIDGE_SRC. It replaces the installed ros-$ROS_DISTRO-fleetless-bridge $installed."
-
-    # A copy, because the mount is read-only and a build writes next to its
-    # source. The same path as in environment.sh.
-    overlay=/tmp/turtle-bridge
-    rm -rf "$overlay"
-    mkdir -p "$overlay/src/fleetless_bridge"
-    tar -C "$BRIDGE_SRC" --exclude=./.git --exclude=./build --exclude=./install --exclude=./log -cf - . \
-        | tar -C "$overlay/src/fleetless_bridge" -xf -
-    if ! (cd "$overlay" && colcon build --base-paths src --event-handlers console_direct+); then
-        echo "entrypoint: the bridge from $BRIDGE_SRC did not build. The installed bridge is not started in its place." >&2
-        exit 1
-    fi
-fi
-
-# shellcheck source=/dev/null
-source /opt/turtle/environment.sh
-
 if [ "$#" -gt 0 ]; then
-    exec "$@"
+    exec /opt/turtle/start.sh "$@"
 fi
-exec ros2 launch fleetless_turtle_bringup turtle.launch.py
+
+stopping=
+turtle=
+# shellcheck disable=SC2317  # reached through the trap below
+stop() {
+    stopping=yes
+    # SIGUSR1 means "stop" to the turtle once it listens (launcher.py). Before
+    # that nothing catches it, and it ends what is there on the spot, before
+    # anything was started. Either way no stop is lost.
+    [ -z "$turtle" ] || kill -USR1 "$turtle" 2> /dev/null || true
+}
+trap stop INT TERM
+
+# In the background, so this shell can wait and listen at once. A script's
+# background job is born with SIGINT ignored, and so is all it starts until
+# a process asks for the signal itself: no Python in there meets an
+# interrupt with its default, the stack trace. In a session of its own, so
+# that Ctrl-C in a terminal reaches this shell alone and takes the same
+# path as `docker stop`.
+setsid /opt/turtle/start.sh &
+turtle=$!
+# A stop that came before the line above found nobody to tell.
+[ -z "$stopping" ] || kill -USR1 "$turtle" 2> /dev/null || true
+
+# `wait` returns as soon as a stop arrives, with the turtle still on its way
+# down. So: wait until it is gone, then ask how it ended.
+while kill -0 "$turtle" 2> /dev/null; do
+    wait "$turtle" || true
+done
+code=0
+wait "$turtle" || code=$?
+
+# 138 is "ended by SIGUSR1": the stop came before the turtle listened.
+# Stopped on request is stopped, whenever the request came.
+if [ -n "$stopping" ] && [ "$code" -eq 138 ]; then
+    code=0
+fi
+exit "$code"

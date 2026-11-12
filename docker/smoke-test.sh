@@ -78,6 +78,21 @@ graph_is_complete() {
 within 30 graph_is_complete || fail "\`ros2 topic list\` inside does not name every topic"
 pass "\`ros2 topic list\` inside names the topics"
 
+# --- A second turtle on the same port -----------------------------------------
+# It shares the first one's network, so its view finds the port taken. The
+# view says so and ends, and the simulator beside it is told to go: one
+# sentence, no stack trace from either.
+set +e
+said=$(docker run --rm --name "$name-second" --network "container:$name" \
+    --env ROS_DOMAIN_ID=77 "$image" 2>&1)
+code=$?
+set -e
+[ "$code" -ne 0 ] || fail "a view port in use left the container at exit 0"
+grep -qF "Port 8765 is in use: the view cannot listen there." <<< "$said" \
+    || fail "the refusal lacks its sentence: $said"
+if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace: $said"; fi
+pass "a view port in use ends the container with one sentence, exit $code"
+
 # --- The bridge alone ---------------------------------------------------------
 # Without a token it prints its own sentence and exits 2, which shows that
 # the package and its dependencies load.
@@ -100,6 +115,39 @@ if [ "$took" -ge 10 ] || [ "$code" -ne 0 ]; then
 fi
 pass "docker stop ends the container in $took s, exit 0"
 remove
+
+# --- A stop at any moment -------------------------------------------------------
+# Early ones above all: the first process is a shell for a moment, then
+# Python imports ROS for a second, then the nodes do the same. At each delay
+# the container has to end within five seconds, by itself and not by
+# Docker's SIGKILL (exit 137), and without a stack trace in its log.
+for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
+    docker run --detach --name "$name" "$image" > /dev/null
+    sleep "$delay"
+    asked=$(date +%s%N)
+    docker stop "$name" > /dev/null
+    took_ms=$((($(date +%s%N) - asked) / 1000000))
+    code=$(docker inspect --format '{{.State.ExitCode}}' "$name")
+    if [ "$took_ms" -ge $((5000 * patience)) ] || [ "$code" -ne 0 ]; then
+        fail "docker stop $delay s after the start took $took_ms ms and the container exited $code"
+    fi
+    if docker logs "$name" 2>&1 | grep -qF "Traceback"; then
+        fail "docker stop $delay s after the start left a stack trace"
+    fi
+    pass "docker stop $delay s after the start: ended in $took_ms ms, exit $code, no stack trace"
+    remove
+done
+
+# --- A view port that is no port ----------------------------------------------
+set +e
+said=$(docker run --rm --name "$name" --env TURTLE_VIEW_PORT=abc "$image" 2>&1)
+code=$?
+set -e
+[ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
+grep -qF 'is "abc": the view listens on a whole number from 1 to 65535.' <<< "$said" \
+    || fail "the refusal lacks its sentence: $said"
+if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace: $said"; fi
+pass "a view port that is no port ends the container with one sentence, exit $code"
 
 # --- A simulator that ends takes the container with it ------------------------
 set +e
