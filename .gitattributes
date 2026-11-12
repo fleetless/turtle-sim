@@ -1,0 +1,8 @@
+# LF everywhere: the shell scripts run in a Linux container whatever the
+# checkout's host is.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.stl binary
