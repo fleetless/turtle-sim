@@ -145,6 +145,9 @@ TRAIL_SPACING_M = 0.1
 TRAIL_MAX_POINTS = 2000
 """A point every 0.1 m, the newest 2000."""
 
+DISTANCE_TOLERANCE_M = 1e-9
+"""Slack on a distance: ten steps of 0.01 m are 0.1 m, whatever their sum rounds to."""
+
 # --- What the node publishes, and how often ---------------------------------
 
 ODOMETRY_RATE_HZ = 20.0

@@ -34,5 +34,7 @@ set -u
 # Nothing outside this container may answer a test.
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
-colcon test --base-paths src/turtle-sim/ros --event-handlers console_direct+ --return-code-on-test-failure
+# One package at a time: the launch tests measure rates.
+colcon test --base-paths src/turtle-sim/ros --executor sequential \
+    --event-handlers console_direct+ --return-code-on-test-failure
 colcon test-result --verbose
