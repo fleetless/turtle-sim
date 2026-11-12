@@ -6,7 +6,8 @@
 #   docker/smoke-test.sh <image>
 #
 #   SMOKE_NAME      container name (default turtle-sim-smoke); the test
-#                   removes this container, and only this one
+#                   removes this container and the two it names after it,
+#                   with -second and -bridge appended, and no other
 #   SMOKE_PORT      host port for the view (default 8765)
 #   SMOKE_PATIENCE  factor on every timeout (default 1); an emulated
 #                   architecture wants more
@@ -42,6 +43,24 @@ within() {
         sleep 1
     done
     return 1
+}
+# Starts a container that has to end by itself and waits for it: what it
+# said is in $said afterwards, its exit code in $code. One that is still
+# running after a minute does not hold the test up. It is removed, and the
+# claim fails with a sentence.
+#   to_its_end <what is being claimed> <container name> <docker run arguments>
+to_its_end() {
+    local claim=$1 container=$2 limit=$((60 * patience))
+    shift 2
+    docker rm --force --volumes "$container" > /dev/null 2>&1 || true
+    docker run --detach --name "$container" "$@" > /dev/null
+    if ! code=$(timeout "$limit" docker wait "$container"); then
+        said=$(docker logs "$container" 2>&1 | tail -n 20)
+        docker rm --force --volumes "$container" > /dev/null 2>&1 || true
+        fail "$claim: the container did not end within $limit s. Its last lines: $said"
+    fi
+    said=$(docker logs "$container" 2>&1)
+    docker rm --force --volumes "$container" > /dev/null 2>&1 || true
 }
 healthz() { curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz"; }
 docker_says_healthy() { [ "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy ]; }
@@ -88,11 +107,8 @@ pass "\`ros2 topic list\` inside names the topics"
 # It shares the first one's network, so its view finds the port taken. The
 # view says so and ends, and the simulator beside it is told to go: one
 # sentence, no stack trace from either.
-set +e
-said=$(docker run --rm --name "$name-second" --network "container:$name" \
-    --env ROS_DOMAIN_ID=77 "$image" 2>&1)
-code=$?
-set -e
+to_its_end "a view port in use" "$name-second" --network "container:$name" \
+    --env ROS_DOMAIN_ID=77 "$image"
 [ "$code" -ne 0 ] || fail "a view port in use left the container at exit 0"
 grep -qF "Port 8765 is in use: the view cannot listen there." <<< "$said" \
     || fail "the refusal lacks its sentence: $said"
@@ -102,10 +118,7 @@ pass "a view port in use ends the container with one sentence, exit $code"
 # --- The bridge alone ---------------------------------------------------------
 # Without a token it prints its own sentence and exits 2, which shows that
 # the package and its dependencies load.
-set +e
-said=$(docker run --rm --name "$name-bridge" "$image" ros2 run fleetless_bridge bridge 2>&1)
-code=$?
-set -e
+to_its_end "the bridge alone" "$name-bridge" "$image" ros2 run fleetless_bridge bridge
 [ "$code" -eq 2 ] || fail "the bridge alone exited $code, not 2: $said"
 grep -qF "FLEETLESS_TOKEN is not set." <<< "$said" || fail "the bridge did not print its sentence: $said"
 pass "the bridge alone prints its sentence and exits 2"
@@ -151,10 +164,7 @@ for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
 done
 
 # --- A view port that is no port ----------------------------------------------
-set +e
-said=$(docker run --rm --name "$name" --env TURTLE_VIEW_PORT=abc "$image" 2>&1)
-code=$?
-set -e
+to_its_end "a view port that is no port" "$name" --env TURTLE_VIEW_PORT=abc "$image"
 [ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
 grep -qF 'TURTLE_VIEW_PORT (the parameter port) is "abc": the view listens on a whole number from 1 to 65535.' <<< "$said" \
     || fail "the refusal lacks its sentence: $said"
@@ -162,10 +172,7 @@ if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace:
 pass "a view port that is no port ends the container with one sentence, exit $code"
 
 # --- A simulator that ends takes the container with it ------------------------
-set +e
-said=$(docker run --rm --name "$name" --env TURTLE_MAP=/nowhere/garden.png "$image" 2>&1)
-code=$?
-set -e
+to_its_end "a map that does not exist" "$name" --env TURTLE_MAP=/nowhere/garden.png "$image"
 [ "$code" -ne 0 ] || fail "a map that does not exist left the container at exit 0"
 grep -qF "Map /nowhere/garden.png does not exist." <<< "$said" || fail "the refusal lacks its sentence: $said"
 if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace: $said"; fi
