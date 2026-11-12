@@ -4,7 +4,7 @@
 A window of 12 m x 12 m, centred on the turtle, at four pixels a cell: the
 cells by their kind with a hint of height, the lines between the squares,
 the pad, and each square's name on top of whatever stands in its corner;
-then the trail, the path, the target and the turtle.
+then the trail, the path ahead of the turtle, the target and the turtle.
 
 The world is drawn once, whole, and kept until a cell changes. A picture is
 then a window cut from it with the few things that move drawn on top. Where
@@ -72,7 +72,9 @@ def render(scene: Scene) -> np.ndarray:
     if len(trail) >= 2:
         cv2.polylines(picture, [trail], False, look.TRAIL, look.TOP_TRAIL_PX, cv2.LINE_AA, SHIFT)
 
-    plan = pixels(scene.plan)
+    # The plan is the path as it was planned, from where the turtle then
+    # stood. What lies behind the turtle is driven, and the trail shows it.
+    plan = pixels(_from_the_turtle_on(scene.plan, scene.x, scene.y))
     if len(plan) >= 2:
         cv2.polylines(picture, [plan], False, look.PLAN, look.TOP_PLAN_PX, cv2.LINE_AA, SHIFT)
     if len(plan) >= 1:
@@ -83,6 +85,27 @@ def render(scene: Scene) -> np.ndarray:
 
     _draw_turtle(picture, scene, pixels, length)
     return picture
+
+
+def _from_the_turtle_on(path, x: float, y: float) -> np.ndarray:
+    """A path from the point of it that is nearest to (x, y) to its end.
+
+    That point lies on one of the path's legs, or is a corner of it. The
+    path's last point stays its last, so the target is where it was.
+    """
+    points = np.asarray(path, dtype=float).reshape(-1, 2)
+    if len(points) < 2:
+        return points
+    here = np.array([x, y])
+    starts, legs = points[:-1], points[1:] - points[:-1]
+    squared = (legs**2).sum(axis=1)
+    # How far along each leg its nearest point lies: 0 is the leg's start,
+    # 1 its end. A leg without a length is its start.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        along = np.where(squared > 0.0, ((here - starts) * legs).sum(axis=1) / squared, 0.0)
+    nearest = starts + np.clip(along, 0.0, 1.0)[:, None] * legs
+    leg = int(((nearest - here) ** 2).sum(axis=1).argmin())
+    return np.vstack([nearest[leg], points[leg + 1 :]])
 
 
 def _window(world: np.ndarray, top: int, left: int, size: int) -> np.ndarray:
