@@ -7,13 +7,16 @@ that the entries are the ones the turtle really offers, and that each has a
 description.
 """
 
+import math
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 
+from fleetless_turtle_cameras.render import constants as look
 from fleetless_turtle_sim.core import constants as c
+from fleetless_turtle_sim.core import joints
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "fleetless" / "turtle.fleetless.yaml"
@@ -39,6 +42,13 @@ DATAPOINTS = {
     "range_left": ("/range/left", "sensor_msgs/msg/Range", "range", None),
     "range_right": ("/range/right", "sensor_msgs/msg/Range", "range", None),
     "scan": ("/scan", "sensor_msgs/msg/LaserScan", None, 2),
+    "joint_states": ("/joint_states", "sensor_msgs/msg/JointState", None, None),
+}
+
+# Slug: (topic, width, height, kbit/s).
+CAMERAS = {
+    "top": ("/turtle/camera/top/image_raw", 480, 480, 800),
+    "eye": ("/turtle/camera/eye/image_raw", 320, 240, 500),
 }
 
 
@@ -51,9 +61,9 @@ def test_it_is_a_version_1_document_for_any_organisation(config):
     assert config["fleetless"] == 1
     # No role and no access section: it publishes into any organisation.
     assert "access" not in config
-    entries = {**config["datapoints"], **config["publishers"]}
+    entries = {**config["datapoints"], **config["publishers"], **config["cameras"]}
     assert not [slug for slug, entry in entries.items() if "role" in entry]
-    assert set(config) == {"fleetless", "datapoints", "publishers"}
+    assert set(config) == {"fleetless", "datapoints", "publishers", "cameras"}
 
 
 def test_the_datapoints_are_the_ones_the_turtle_offers(config):
@@ -72,7 +82,7 @@ def test_every_status_field_named_exists_in_the_message(config):
 
 
 def test_every_entry_and_every_parameter_has_a_description(config):
-    entries = {**config["datapoints"], **config["publishers"]}
+    entries = {**config["datapoints"], **config["publishers"], **config["cameras"]}
     for slug, entry in entries.items():
         assert len(entry.get("description", "").strip()) >= 40, slug
         for name, parameter in entry.get("parameters", {}).items():
@@ -193,6 +203,69 @@ def test_the_numbers_in_the_descriptions_are_the_simulators(config):
     assert f"within the last {c.BUMPER_HOLD_S} s" in bumper
     mode = " ".join(datapoints["mode"]["description"].split())
     assert f"within the last {c.COMMAND_TIMEOUT_S} s" in mode
+
+
+def test_the_cameras_are_the_two_the_turtle_has(config):
+    described = {
+        slug: (
+            entry["source"]["topic"],
+            entry["width"],
+            entry["height"],
+            entry["bitrate_kbps"],
+        )
+        for slug, entry in config["cameras"].items()
+    }
+    assert described == CAMERAS
+    for slug, entry in config["cameras"].items():
+        assert entry["source"] == {
+            "kind": "ros",
+            "topic": CAMERAS[slug][0],
+            "type": "sensor_msgs/msg/Image",
+        }, slug
+        assert entry["snapshot_interval_seconds"] == 5, slug
+
+
+def test_the_cameras_sizes_and_rate_are_the_renderers(config):
+    """The bridge resizes what does not fit, and a rate above the cameras' is a promise not kept."""
+    top, eye = config["cameras"]["top"], config["cameras"]["eye"]
+    assert (top["width"], top["height"]) == (look.TOP_SIZE_PX, look.TOP_SIZE_PX)
+    assert (eye["width"], eye["height"]) == (look.EYE_WIDTH_PX, look.EYE_HEIGHT_PX)
+    assert top["fps"] == eye["fps"] == look.FRAME_RATE_HZ
+
+
+def test_the_numbers_in_the_cameras_descriptions_are_the_renderers(config):
+    top = " ".join(config["cameras"]["top"]["description"].split())
+    assert f"a window of {look.TOP_WINDOW_M:g} m by {look.TOP_WINDOW_M:g} m" in top
+    metres_a_pixel = look.TOP_WINDOW_M / look.TOP_SIZE_PX
+    assert f"{metres_a_pixel:g} m a pixel" in top
+    pixels_a_cell = round(c.CELL_SIZE_M / metres_a_pixel)
+    assert f"a cell is {pixels_a_cell} pixels and a square {pixels_a_cell * c.SQUARE_CELLS}" in top
+
+    eye = " ".join(config["cameras"]["eye"]["description"].split())
+    assert f"from {look.EYE_HEIGHT_M} m above the floor" in eye
+    assert f"{math.degrees(look.EYE_FIELD_OF_VIEW):g} degrees wide" in eye
+    assert f"up to {look.EYE_RANGE_M:g} m" in eye
+    assert f"a cream face {look.WALL_HEIGHT_M} m tall" in eye
+    assert "a rock a grey one half as tall" in eye
+    assert look.ROCK_HEIGHT_M == look.WALL_HEIGHT_M / 2
+    assert f"the cells, {c.CELL_SIZE_M} m each" in eye
+
+
+def test_joint_states_is_the_whole_message_at_the_rate_the_turtle_publishes_it(config):
+    entry = config["datapoints"]["joint_states"]
+    # No field: the console's Model page takes names and positions together.
+    # No throttle: 20 Hz is what moves a model smoothly, and the most a
+    # datapoint may carry.
+    assert "field" not in entry and "rate_throttle_hz" not in entry
+    assert c.JOINT_RATE_HZ == 20.0
+    text = " ".join(entry["description"].split())
+    for name in joints.NAMES:
+        assert f"`{name}`" in text, name
+    assert len(joints.NAMES) == 5 and "five joints" in text
+    assert f"by {c.HEAD_TURN_LIMIT:.2f} rad (30 degrees) at most" in text
+    assert math.degrees(c.HEAD_TURN_LIMIT) == pytest.approx(30.0)
+    assert f"by {c.LEG_SWING} rad either way" in text
+    assert f"once for every {c.LEG_STRIDE_M} m their side has walked" in text
 
 
 def test_the_page_colours_the_battery_where_the_alert_fires(config):

@@ -226,6 +226,20 @@ datapoints:
       straight back, index 18 to the right, index 36 straight ahead, index
       54 to the left. A ray that hit nothing within 4.0 m is null.
 
+  # --- The model ----------------------------------------------------------------
+  joint_states:
+    topic: /joint_states
+    type: sensor_msgs/msg/JointState
+    description: |
+      How the turtle's model stands, as the whole message: `name` lists its
+      five joints, `position` their angles in radians, in the same order.
+      `head_joint` turns the head into a curve, to the left for a positive
+      angle, by 0.52 rad (30 degrees) at most. The four legs,
+      `leg_front_left_joint`, `leg_front_right_joint`, `leg_hind_left_joint`
+      and `leg_hind_right_joint`, swing forwards for a positive angle, by
+      0.45 rad either way, once for every 0.25 m their side has walked. The
+      console's Model page moves the URDF with it.
+
 publishers:
   drive:
     topic: /cmd_vel
@@ -267,3 +281,44 @@ publishers:
         linear: { x: 0.0, y: 0.0, z: 0.0 }
         angular: { x: 0.0, y: 0.0, z: 0.0 }
     quiet_timeout_ms: 2000
+
+cameras:
+  # Both are drawn inside the container, on the CPU, ten times a second.
+  top:
+    source:
+      kind: ros
+      topic: /turtle/camera/top/image_raw
+      type: sensor_msgs/msg/Image
+    width: 480
+    height: 480
+    fps: 10
+    bitrate_kbps: 800
+    snapshot_interval_seconds: 5
+    description: |
+      The garden from above with the turtle in the middle of the picture,
+      north up: a window of 12 m by 12 m, 0.025 m a pixel, so a cell is 4
+      pixels and a square 64. Lawn is green, a wall cream, a rock grey,
+      water blue, the charging pad yellow with a bolt; past the garden's
+      edge the picture is dark green. Thin lines part the squares, and each
+      square's name stands in its north-west corner. The turtle is the dark
+      green dot in the pale ring, and the arrowhead on the ring points
+      where it looks. A violet line is the path it plans to drive, with a
+      ring on the target; an orange line is the trail it has left.
+  eye:
+    source:
+      kind: ros
+      topic: /turtle/camera/eye/image_raw
+      type: sensor_msgs/msg/Image
+    width: 320
+    height: 240
+    fps: 10
+    bitrate_kbps: 500
+    snapshot_interval_seconds: 5
+    description: |
+      What the turtle sees: the view along its heading from 0.1 m above the
+      floor, 70 degrees wide, up to 8 m; what is further away is haze. A
+      wall is a cream face 0.3 m tall, a rock a grey one half as tall,
+      water is blue and flat on the floor, the charging pad yellow. A face
+      is paler the further away it is, and darker where it looks away from
+      the sun in the south-west. The floor's tiles are the cells, 0.1 m
+      each. Left in the picture is left of the turtle.
