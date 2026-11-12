@@ -21,6 +21,7 @@ from ament_index_python.packages import get_package_prefix
 from fleetless_turtle_msgs.msg import TurtleStatus, World
 from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import NodeNameNonExistentError
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState, LaserScan
 
@@ -367,7 +368,17 @@ def test_what_a_browser_sends_is_ignored(view, turtle):
     # The frames go on as if nothing had been said, and none answers.
     assert {frame["type"] for frame in heard} == {"world", "state", "scan"}
     assert sum(frame["type"] == "state" for frame in heard) >= 15
-    # And the node has no way to pass an order on: it publishes nothing of its own.
+
+    # And the node has no way to pass an order on: it publishes nothing of its
+    # own. Asked once the graph knows the node by what it subscribes to, or
+    # an empty answer would only mean "not heard of yet".
+    def subscribed():
+        try:
+            return dict(turtle.node.get_subscriber_names_and_types_by_node("turtle_viewer", "/"))
+        except NodeNameNonExistentError:
+            return {}
+
+    wait_until(lambda: "/odom" in subscribed(), what="the graph knowing the view's node")
     published = dict(turtle.node.get_publisher_names_and_types_by_node("turtle_viewer", "/"))
     assert set(published) <= {"/rosout", "/parameter_events"}
     assert turtle.node.count_subscribers("/cmd_vel") == 0

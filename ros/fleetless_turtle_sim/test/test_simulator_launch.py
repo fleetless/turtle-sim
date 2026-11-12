@@ -86,23 +86,31 @@ class TestSimulatorNode(unittest.TestCase):
     # The tests run in the order of their names; the last one drives away.
 
     def test_1_every_topic_exists_with_its_type(self):
-        deadline = time.monotonic() + 15.0
         expected = {topic: [type_name(msg_type)] for topic, (msg_type, _) in PUBLISHED.items()}
         expected["/cmd_vel"] = ["geometry_msgs/msg/Twist"]
-        while True:
-            graph = dict(self.probe.node.get_topic_names_and_types())
+        node = self.probe.node
+
+        def missing_from_the_graph() -> dict:
+            graph = dict(node.get_topic_names_and_types())
             missing = {
                 topic: types for topic, types in expected.items() if graph.get(topic) != types
             }
-            if not missing or time.monotonic() > deadline:
-                break
+            # The graph learns of an endpoint and of the node behind it from
+            # two messages, in either order. Until both have come, the node
+            # is "_NODE_NAME_UNKNOWN_". Both belong to "the graph is there".
+            for topic in PUBLISHED:
+                names = [info.node_name for info in node.get_publishers_info_by_topic(topic)]
+                if "turtle_simulator" not in names:
+                    missing[f"the publisher of {topic}"] = names
+            names = [info.node_name for info in node.get_subscriptions_info_by_topic("/cmd_vel")]
+            if "turtle_simulator" not in names:
+                missing["the subscriber of /cmd_vel"] = names
+            return missing
+
+        deadline = time.monotonic() + 15.0
+        while (missing := missing_from_the_graph()) and time.monotonic() < deadline:
             time.sleep(0.2)
         self.assertEqual(missing, {})
-        for topic in PUBLISHED:
-            publishers = self.probe.node.get_publishers_info_by_topic(topic)
-            self.assertIn("turtle_simulator", [info.node_name for info in publishers], topic)
-        listeners = self.probe.node.get_subscriptions_info_by_topic("/cmd_vel")
-        self.assertIn("turtle_simulator", [info.node_name for info in listeners])
 
     def test_2_every_topic_has_roughly_its_rate(self):
         heard = {
