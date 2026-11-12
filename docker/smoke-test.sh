@@ -23,7 +23,7 @@ TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/righ
         /battery_state /turtle/status /turtle/world /map /turtle/plan /turtle/trail
         /turtle/camera/top/image_raw /turtle/camera/eye/image_raw
         /joint_states /robot_description"
-NODES="/turtle_simulator /turtle_viewer"
+NODES="/turtle_simulator /turtle_viewer /turtle_cameras /robot_state_publisher"
 SERVICES="/turtle/reset /turtle/teleport /turtle/set_block /turtle/set_trail"
 ACTIONS="/turtle/drive_to /turtle/drive_to_square /turtle/dock"
 
@@ -97,7 +97,7 @@ pass "/healthz answers 200"
 # is the one that counts. `ros2` asks a daemon, and a daemon that only starts
 # with the first question has heard half the graph when it answers. This
 # one has listened since the turtle started (docker/ros2_daemon.py), and a
-# question that comes before it has heard the simulator waits (docker/ros2).
+# question that comes before it has heard every node waits (docker/ros2).
 #   names_all <what was listed> <the names it has to hold>
 names_all() {
     local listed=$1 name
@@ -117,7 +117,7 @@ names_all() {
 
     listed=$(docker exec "$name" ros2 node list) || fail "\`ros2 node list\` inside failed"
     names_all "$listed" $NODES || fail "the first \`ros2 node list\` inside lacks $missing"
-    pass "the first \`ros2 node list\` inside names both nodes"
+    pass "the first \`ros2 node list\` inside names all four nodes"
 
     listed=$(docker exec "$name" ros2 service list) || fail "\`ros2 service list\` inside failed"
     names_all "$listed" $SERVICES || fail "\`ros2 service list\` inside lacks $missing"
