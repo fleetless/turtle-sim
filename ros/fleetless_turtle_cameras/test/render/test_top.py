@@ -404,6 +404,96 @@ def test_the_path_is_drawn_and_its_end_is_the_target(kinds):
     assert not drawn[target[0], target[1] + ring + 4]
 
 
+def test_the_path_is_drawn_from_the_turtle_on_and_the_trail_whole(kinds):
+    """A plan is the path as it was planned, from where the turtle stood then.
+
+    Halfway along it, the first half lies behind the turtle. Drawn whole, it
+    covered the trail of the same drive.
+    """
+    scene = scene_at(kinds)
+    x, y = scene.x, scene.y
+    plan = np.array([[x - 3.0, y], [x + 3.0, y], [x + 3.0, y + 2.0]])
+    trail = np.array([[x - 3.0, y], [x - 2.0, y], [x - 1.0, y], [x, y]])
+    with_the_trail = top.render(scene_at(kinds, trail=trail))
+    picture = top.render(scene_at(kinds, plan=plan, trail=trail))
+    path = (picture == look.PLAN).all(axis=2)
+
+    # Ahead of the turtle the path is there, to its end, with the ring on the target.
+    assert path[pixel_of(scene, x + 1.5, y)]
+    assert path[pixel_of(scene, x + 3.0, y + 1.0)]
+    target = pixel_of(scene, x + 3.0, y + 2.0)
+    ring = round(look.TOP_TARGET_RADIUS_M * PX_PER_M)
+    assert path[target] and path[target[0], target[1] + ring]
+    # Behind it there is no path, and the trail shows as it does without one.
+    clear_of_the_plate = MIDDLE - round(look.TOP_MARKER_RADIUS_M * PX_PER_M) - 2
+    assert not path[:, :clear_of_the_plate].any()
+    behind = (slice(None), slice(0, clear_of_the_plate))
+    assert np.array_equal(picture[behind], with_the_trail[behind])
+    assert not np.array_equal(with_the_trail[behind], top.render(scene)[behind])
+
+
+def test_off_its_path_the_turtle_sees_it_from_the_nearest_point_on(kinds):
+    scene = scene_at(kinds)
+    x, y = scene.x, scene.y
+    # The path runs east, half a metre south of the turtle.
+    plan = np.array([[x - 3.0, y - 0.5], [x + 3.0, y - 0.5]])
+    path = (top.render(scene_at(kinds, plan=plan)) == look.PLAN).all(axis=2)
+    rows, columns = np.nonzero(path)
+    assert path[pixel_of(scene, x + 1.0, y - 0.5)]
+    # It begins below the turtle, where the path is nearest, and not before.
+    assert columns.min() in (MIDDLE - 2, MIDDLE - 1, MIDDLE)
+    # A straight line half a metre south, as far as the ring on its target.
+    line = rows[columns < MIDDLE + round(2.5 * PX_PER_M)]
+    assert line.min() >= MIDDLE + round(0.5 * PX_PER_M) - 2
+
+
+def test_at_a_corner_of_its_path_the_turtle_has_the_next_leg_ahead(kinds):
+    scene = scene_at(kinds)
+    x, y = scene.x, scene.y
+    plan = np.array([[x - 2.0, y], [x, y], [x, y + 2.0]])
+    path = (top.render(scene_at(kinds, plan=plan)) == look.PLAN).all(axis=2)
+    assert path[pixel_of(scene, x, y + 1.0)]
+    assert not path[pixel_of(scene, x - 1.0, y)]
+
+
+def test_past_the_end_of_its_path_only_the_target_is_left(kinds):
+    scene = scene_at(kinds)
+    x, y = scene.x, scene.y
+    plan = np.array([[x - 4.0, y], [x - 2.0, y]])
+    path = (top.render(scene_at(kinds, plan=plan)) == look.PLAN).all(axis=2)
+    target = pixel_of(scene, x - 2.0, y)
+    assert path[target]
+    rows, columns = np.nonzero(path)
+    ring = round(look.TOP_TARGET_RADIUS_M * PX_PER_M) + 2
+    assert np.hypot(rows - target[0], columns - target[1]).max() <= ring
+
+
+@pytest.mark.parametrize(
+    ("plan", "target"),
+    [
+        ([(11.0, 10.0), (11.0, 10.0), (11.0, 10.0)], (11.0, 10.0)),
+        ([(8.0, 10.05), (8.0, 10.05), (12.0, 10.05)], (12.0, 10.05)),
+        ([(11.0, 11.0), (11.0, 11.0)], (11.0, 11.0)),
+    ],
+    ids=["three times one point", "a leg without a length first", "one point twice"],
+)
+def test_a_path_with_a_leg_of_no_length_is_drawn(kinds, plan, target):
+    scene = scene_at(kinds, plan=plan)
+    path = (top.render(scene) == look.PLAN).all(axis=2)
+    assert path[pixel_of(scene, *target)]
+
+
+def test_a_target_under_the_turtle_lies_under_its_plate(kinds):
+    scene = scene_at(kinds)
+    arrived = top.render(scene_at(kinds, plan=[(scene.x - 2.0, scene.y), (scene.x, scene.y)]))
+    assert not (arrived == look.PLAN).all(axis=2).any()
+    # What differs from a turtle without a plan is the faint rim where the
+    # target's ring and the plate's edge are blended into each other.
+    rows, columns = np.nonzero((arrived != top.render(scene)).any(axis=2))
+    plate_px = look.TOP_MARKER_RADIUS_M * PX_PER_M
+    assert np.hypot(rows + 0.5 - MIDDLE, columns + 0.5 - MIDDLE).max(initial=0.0) < plate_px + 1.5
+
+
 def test_a_path_of_one_point_is_a_target(kinds):
     scene = scene_at(kinds, plan=np.array([[12.0, 12.0]]))
     drawn = (top.render(scene) == look.PLAN).all(axis=2)
