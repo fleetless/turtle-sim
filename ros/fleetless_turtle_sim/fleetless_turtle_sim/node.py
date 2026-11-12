@@ -20,7 +20,7 @@ from fleetless_turtle_msgs.msg import World as WorldMsg
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rcl_interfaces.msg import ParameterDescriptor
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
@@ -347,9 +347,12 @@ def run(stop: threading.Event, args=None) -> int:
         rclpy.try_shutdown()
         return 0
 
-    # Several threads, so that a long callback (an action, later) never
-    # holds up the step.
-    executor = MultiThreadedExecutor()
+    # One thread. Under rclpy's multi-threaded executor the step timer
+    # stalled for 90 to 560 ms whenever /cmd_vel arrived, and `Pace` drops a
+    # lag of more than 0.1 s: on a busy machine the turtle drove at 87 % of
+    # the commanded speed. No callback of this node waits for another one,
+    # so one thread is all they need.
+    executor = SingleThreadedExecutor()
     executor.add_node(node)
     failures = []
 
