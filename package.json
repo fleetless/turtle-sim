@@ -1,0 +1,20 @@
+{
+  "name": "fleetless-turtle-sim",
+  "private": true,
+  "type": "module",
+  "description": "Node is here for one job: checking fleetless/turtle.fleetless.yaml against the schema of @fleetless/contracts. The simulator itself is Python.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "validate": "node scripts/validate-fleetless-yaml.mjs"
+  },
+  "dependencies": {
+    "@fleetless/contracts": "15.0.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "js-yaml": "5.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.4.1"
+}
