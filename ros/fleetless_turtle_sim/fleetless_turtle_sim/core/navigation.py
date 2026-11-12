@@ -89,18 +89,19 @@ def traversable_cells(world: World) -> np.ndarray:
 def nearest_traversable(
     passable: np.ndarray, x: float, y: float, cells: tuple[int, int, int, int]
 ) -> Cell | None:
-    """The traversable cell whose centre is nearest to (x, y), among `cells`.
+    """The traversable cell whose centre is nearest to a point, among `cells`.
 
-    `cells` is (x_min, y_min, x_max, y_max), both corners included. A tie
-    goes to the lower row, then the lower column, so the answer never
-    depends on the order the cells are looked at.
+    The point is in cells, not metres: cell (cx, cy) has its centre at
+    (cx + 0.5, cy + 0.5). A square's centre is a whole number there, and
+    the four cells around it are exactly as far away. Such a tie goes to
+    the lower row, then the lower column.
+    `cells` is (x_min, y_min, x_max, y_max), both corners included.
     """
     x_min, y_min, x_max, y_max = cells
     cys, cxs = np.nonzero(passable[y_min : y_max + 1, x_min : x_max + 1])
     best = None
     for cx, cy in zip((cxs + x_min).tolist(), (cys + y_min).tolist(), strict=True):
-        centre_x, centre_y = cell_centre(cx, cy)
-        key = ((centre_x - x) ** 2 + (centre_y - y) ** 2, cy, cx)
+        key = ((cx + 0.5 - x) ** 2 + (cy + 0.5 - y) ** 2, cy, cx)
         if best is None or key < best:
             best = key
     return None if best is None else (best[2], best[1])
@@ -256,7 +257,9 @@ def start_cell(world: World, passable: np.ndarray, x: float, y: float) -> Cell |
             in_reach[ny, nx] = passable[ny, nx] and clear(
                 world, x, y, *cell_centre(nx, ny), TURTLE_RADIUS_M
             )
-    return nearest_traversable(in_reach, x, y, (x_min, y_min, x_max, y_max))
+    return nearest_traversable(
+        in_reach, x / CELL_SIZE_M, y / CELL_SIZE_M, (x_min, y_min, x_max, y_max)
+    )
 
 
 def plan(

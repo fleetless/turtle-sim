@@ -17,18 +17,35 @@ import numpy as np
 from .constants import (
     BLOCKING,
     CELL_SIZE_M,
+    FREE,
     GRID_CELLS,
     MAP_COLOURS,
     PAD,
     PLANNER_CLEARANCE_M,
+    ROCK,
     SQUARE_CELLS,
     SQUARES,
     TOUCH_TOLERANCE_M2,
     TURTLE_RADIUS_M,
+    WALL,
+    WATER,
 )
 
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:SQUARES]
 _SQUARE = re.compile(rf"([{_LETTERS[0]}-{_LETTERS[-1]}])([1-9][0-9]?)")
+
+FIRST_SQUARE = f"{_LETTERS[0]}1"
+LAST_SQUARE = f"{_LETTERS[-1]}{SQUARES}"
+
+
+KIND_NAMES = {
+    FREE: "free",
+    WALL: "a wall",
+    ROCK: "a rock",
+    WATER: "water",
+    PAD: "the charging pad",
+}
+"""How a sentence names a cell's kind."""
 
 
 class MapError(Exception):
