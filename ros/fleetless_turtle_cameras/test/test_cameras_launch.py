@@ -174,14 +174,18 @@ class TestCamerasNode(unittest.TestCase):
 
     def test_3_the_pictures_show_the_garden_from_the_pad(self):
         top = self.next_top()
-        # The turtle in the middle, on the pad with its mark, the garden wall
-        # to the west and south of it, and past the wall, nothing.
+        # The turtle in the middle, on the pad, whose mark lies under it,
+        # the garden wall to the west and south of it, and past the wall,
+        # nothing.
         self.assertTrue(
             has(top[MIDDLE - 1 : MIDDLE + 1, MIDDLE - 1 : MIDDLE + 1], look.TURTLE_SHELL_TOP).all()
         )
-        self.assertGreater(has(top, look.PAD_MARK).sum(), 20)
-        wall = MIDDLE - round((START_M - 0.1) * PX_PER_M)  # the middle of the wall's 0.2 m
-        self.assertTrue(has(top[MIDDLE - 40 : MIDDLE - 20, wall - 1 : wall + 1], look.WALL).all())
+        self.assertFalse(has(top, look.PAD_MARK).any())
+        pad = np.abs(top[MIDDLE + 14, MIDDLE - 14].astype(int) - np.array(look.PAD)).max() < 14
+        self.assertTrue(pad)
+        # The middle of the wall's 0.2 m, between the names of two squares.
+        wall = MIDDLE - round((START_M - 0.1) * PX_PER_M)
+        self.assertTrue(has(top[MIDDLE - 60 : MIDDLE - 45, wall - 1 : wall + 1], look.WALL).all())
         self.assertTrue(has(top[MIDDLE + 60 :, : MIDDLE - 60], look.OUTSIDE).all())
 
         eye = self.next_eye()
@@ -309,6 +313,7 @@ class TestCamerasNode(unittest.TestCase):
         middle = now[MIDDLE - 1 : MIDDLE + 1, MIDDLE - 1 : MIDDLE + 1]
         self.assertTrue(has(middle, look.TURTLE_SHELL_TOP).any(), middle)
         _, columns = np.nonzero(has(now, look.PAD_MARK))
+        self.assertGreater(columns.size, 0, "the pad's mark does not show")
         self.assertLess(columns.mean(), MIDDLE - 1.0 * PX_PER_M)
 
     @staticmethod

@@ -74,9 +74,11 @@ action `fetch_types`) and publish again.
 - **Build on it.** The [app starter](https://docs.fleetless.dev/recipes/app-starter/)
   is a dashboard on `@fleetless/sdk`. Point it at this robot.
 - **Look through its eyes.** The robot's **Cameras** show `top`, the map
-  around the turtle, and `eye`, what it sees from 0.1 m above the lawn. Over
-  MCP a snapshot of either is a picture, so whatever you asked to drive can
-  also look where it is going.
+  around the turtle, and `eye`, what it sees from 0.1 m above the lawn.
+  [The first `top`](docs/camera-top-start.png) is three quarters dark
+  green: the pad lies in the garden's corner, and past the wall there is
+  nothing. Over MCP a snapshot of either is a picture, so whatever you
+  asked to drive can also look where it is going.
 - **Watch it walk.** On the robot's **Model** page, choose **Add a URDF**,
   then **Download from robot**, and pick `joint_states` as the datapoint
   driving the joints. Then drive. Each side's legs swing with the distance

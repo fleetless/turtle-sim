@@ -67,21 +67,26 @@ TOP_PAD_MARK = ((0.58, 0.06), (0.24, 0.56), (0.47, 0.56), (0.40, 0.94), (0.76, 0
 """A lightning bolt, the usual sign for "charge here": the view's, as the
 corners of its outline in a square from (0, 0) top left to (1, 1)."""
 
-TOP_PAD_MARK_SIZE = 0.62
-"""That square's side, as a part of the pad's narrower one."""
+TOP_PAD_MARK_SIZE = 0.25
+"""That square's side, as a part of the pad's narrower one. Small, so the
+turtle's plate covers the bolt where the turtle starts: a bolt that reached
+past the plate was two dark points beside the turtle, and read as a second
+arrow."""
 
 TOP_MARKER_RADIUS_M = 0.2
-"""The ring around the turtle, so it is found at four pixels a cell."""
+"""The pale plate under the turtle, so it is found at four pixels a cell."""
 
-TOP_MARKER_RING_PX = 1
-"""How wide that ring is drawn."""
+TOP_MARKER_EDGE_PX = 1
+"""How wide the dark edge of the plate and of the arrowhead is drawn. The
+edge is what shows on the yellow pad and on a pale wall, where the plate's
+own colour does not."""
 
-TOP_ARROW_TIP = 1.75
-TOP_ARROW_BASE = 1.12
-TOP_ARROW_HALF_WIDTH = 0.42
-"""The arrowhead ahead of the ring, in the ring's radii: how far from the
+TOP_ARROW_TIP = 2.2
+TOP_ARROW_BASE = 1.15
+TOP_ARROW_HALF_WIDTH = 0.65
+"""The arrowhead ahead of the plate, in the plate's radii: how far from the
 turtle its tip lies and its base, and how far the base reaches to either
-side. The view's."""
+side. Large enough to keep some of its own colour inside its edge."""
 
 TOP_HEAD_PAST_THE_RIM_M = 0.012
 TOP_HEAD_RADIUS_M = 0.036
@@ -173,3 +178,4 @@ TURTLE_SHELL_TOP = (0x3F, 0x8A, 0x61)
 TURTLE_RIM = (0x86, 0xB8, 0x6B)
 TURTLE_SKIN = (0xA3, 0xC9, 0x7D)
 TURTLE_MARKER = (0xFF, 0xF6, 0xD6)
+TURTLE_MARKER_EDGE = (0x1C, 0x24, 0x20)

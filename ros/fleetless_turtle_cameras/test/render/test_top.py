@@ -2,6 +2,7 @@
 """The `top` camera: the map around the turtle, north up, against hand-made worlds."""
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,7 +11,9 @@ from fleetless_turtle_cameras.render import constants as look
 from fleetless_turtle_cameras.render import top
 from fleetless_turtle_cameras.render.scene import Scene
 from fleetless_turtle_sim.core import constants as c
-from fleetless_turtle_sim.core.world import cell_centre
+from fleetless_turtle_sim.core.world import World, cell_centre
+
+GARDEN = Path(__file__).resolve().parents[4] / "maps" / "garden.png"
 
 SIZE = look.TOP_SIZE_PX
 MIDDLE = SIZE // 2
@@ -105,11 +108,153 @@ def test_the_turtle_stays_at_the_centre_wherever_it_is(kinds):
 )
 def test_the_arrowhead_points_where_the_turtle_looks(kinds, heading, row, column):
     picture = top.render(scene_at(kinds, heading=heading))
-    # The arrowhead's middle lies 1.4 marker radii ahead of the turtle.
-    ahead = round(1.4 * look.TOP_MARKER_RADIUS_M * PX_PER_M)
+    # The arrowhead's middle lies halfway between its base and its tip.
+    middle_of_it = (look.TOP_ARROW_BASE + look.TOP_ARROW_TIP) / 2
+    ahead = round(middle_of_it * look.TOP_MARKER_RADIUS_M * PX_PER_M)
     marked = (picture == look.TURTLE_MARKER).all(axis=2)
-    assert marked[MIDDLE + row * ahead, MIDDLE + column * ahead]
-    assert not marked[MIDDLE - row * ahead, MIDDLE - column * ahead]
+
+    def around(at_row: int, at_column: int) -> np.ndarray:
+        return marked[at_row - 1 : at_row + 2, at_column - 1 : at_column + 2]
+
+    assert around(MIDDLE + row * ahead, MIDDLE + column * ahead).any()
+    assert not around(MIDDLE - row * ahead, MIDDLE - column * ahead).any()
+
+
+# --- The first picture: the turtle on the charging pad ------------------------
+
+
+@pytest.fixture(scope="module")
+def garden():
+    return World.load(GARDEN)
+
+
+def brightness(picture: np.ndarray) -> np.ndarray:
+    return picture.astype(int).sum(axis=2)
+
+
+def around_the_turtle(picture: np.ndarray):
+    """For every pixel: how far its middle is from the picture's, and at which bearing."""
+    rows, columns = np.indices(picture.shape[:2])
+    east, north = columns + 0.5 - MIDDLE, MIDDLE - (rows + 0.5)
+    return np.hypot(east, north), np.arctan2(north, east)
+
+
+@pytest.mark.parametrize("heading_deg", range(0, 360, 45))
+def test_on_the_pad_the_arrowhead_is_the_only_thing_beside_the_turtle(garden, heading_deg):
+    """The first picture a user sees: the turtle where it starts, in the middle of the pad.
+
+    The pad's bolt lies there too. It used to reach past the turtle's ring,
+    and its two dark points stood beside the turtle like a second arrow.
+    Now everything on the pad around the turtle's plate is pad, but for
+    the arrowhead, which lies where the turtle looks.
+    """
+    x, y, _ = garden.start_pose
+    heading = math.radians(heading_deg)
+    picture = top.render(Scene(garden.kinds, x, y, heading))
+    distance, bearing = around_the_turtle(picture)
+
+    plate_px = look.TOP_MARKER_RADIUS_M * PX_PER_M
+    # From clear of the plate's edge to 0.45 m: still on the pad, on every side.
+    beside = (distance > plate_px + 2) & (distance < 0.45 * PX_PER_M)
+    pad = (np.abs(picture.astype(int) - np.array(look.PAD)).max(axis=2) < 14) | (
+        np.abs(picture.astype(int) - np.array(look.PAD_EDGE)).max(axis=2) < 14
+    )
+    not_pad = beside & ~pad
+    assert not_pad.sum() > 15, "no arrowhead"
+    off = np.abs((bearing[not_pad] - heading + math.pi) % (2 * math.pi) - math.pi)
+    # As far to the side as the arrowhead's base reaches, and its edge's two
+    # pixels more. The bolt's points stood 80 degrees and more off the heading.
+    widest = math.atan2(look.TOP_ARROW_HALF_WIDTH, look.TOP_ARROW_BASE) + math.atan2(
+        2, plate_px + 2
+    )
+    assert off.max() < widest < math.radians(45)
+
+
+def test_the_pads_mark_lies_under_the_turtle_where_it_starts_and_shows_once_it_has_left(garden):
+    x, y, heading = garden.start_pose
+    at_the_start = top.render(Scene(garden.kinds, x, y, heading))
+    assert not (at_the_start == look.PAD_MARK).all(axis=2).any()
+    # The shipped pad is 1.2 m wide: its bolt is narrower than the plate.
+    pad_side_m = 12 * c.CELL_SIZE_M
+    assert look.TOP_PAD_MARK_SIZE * pad_side_m < 2 * look.TOP_MARKER_RADIUS_M
+
+    gone = top.render(Scene(garden.kinds, x + 1.5, y, heading))
+    mark = (gone == look.PAD_MARK).all(axis=2)
+    assert mark.sum() > 8
+    _, columns = np.nonzero(mark)
+    assert columns.mean() < MIDDLE - 1.2 * PX_PER_M
+
+
+@pytest.mark.parametrize(
+    ("cell", "heading", "floor"),
+    [((8, 8), 0.0, "the pad"), ((2, 100), math.pi, "the garden's wall")],
+    ids=["on the pad", "against a wall"],
+)
+def test_the_arrowhead_has_a_dark_edge_where_its_own_colour_does_not_show(
+    garden, cell, heading, floor
+):
+    """Pale on yellow and pale on a pale wall are hard to see. The edge is what is read."""
+    picture = top.render(Scene(garden.kinds, *cell_centre(*cell), heading))
+    distance, bearing = around_the_turtle(picture)
+    plate_px = look.TOP_MARKER_RADIUS_M * PX_PER_M
+    off = np.abs((bearing - heading + math.pi) % (2 * math.pi) - math.pi)
+    where_it_is = (
+        (distance > look.TOP_ARROW_BASE * plate_px - 1)
+        & (distance < look.TOP_ARROW_TIP * plate_px + 1)
+        & (off < math.radians(30))
+    )
+    inside, dark = brightness(picture)[where_it_is], np.array(look.TURTLE_MARKER_EDGE).sum()
+    pale = np.array(look.TURTLE_MARKER).sum()
+    # Its inside is its own pale colour, and around it runs a line far darker than the floor.
+    assert (inside == pale).sum() >= 6, floor
+    assert (inside < dark + 150).sum() >= 10, floor
+
+
+def test_a_name_is_read_whatever_stands_in_its_squares_corner(kinds):
+    """The same name on lawn and on a wall: the same letters, pixel for pixel."""
+    scene = scene_at(kinds, cx=60, cy=40)
+    # Square C3 begins at cell (32, 32); its north-west corner is at 3.2 m, 4.8 m.
+    row, column = pixel_of(scene, 3.2, 4.8)
+    name = (slice(row + 3, row + 16), slice(column + 2, column + 26))
+    on_lawn = brightness(top.render(scene))[name]
+
+    kinds[40:50, 29:42] = c.WALL  # over the corner and well around it
+    on_wall = brightness(top.render(scene))[name]
+    assert on_wall.max() == np.array(look.WALL).sum()
+
+    # A letter's stroke is far darker than what it stands on, lawn or wall.
+    letters_on_lawn = on_lawn < on_lawn.max() - 90
+    letters_on_wall = on_wall < on_wall.max() - 130
+    assert letters_on_lawn.sum() > 25
+    assert (letters_on_lawn ^ letters_on_wall).sum() <= 0.15 * letters_on_lawn.sum()
+
+
+def test_in_the_garden_the_names_along_the_outer_wall_are_drawn_on_it(garden):
+    """Column A's names begin over the west wall, and row 16's reach up into the north one.
+
+    The wall is eight pixels wide. A name begins four pixels into its
+    square and its letters reach from five to thirteen pixels below the
+    square's top, so part of every such name lies on the wall. It used to
+    lie under it.
+    """
+    scene = Scene(garden.kinds, 3.0, 22.0, 0.0)
+    picture = brightness(top.render(scene))
+    wall = np.array(look.WALL).sum()
+    east, down = look.TOP_NAME_INSET_PX
+
+    def strokes(patch: np.ndarray) -> int:
+        """Pixels of a letter on the wall: far darker than the wall is."""
+        return int((patch < wall - 130).sum())
+
+    # Squares A12 to A15 and B16 to D16 are in this picture.
+    for number in (12, 13, 14, 15):
+        row, column = pixel_of(scene, 0.0, number * 1.6)
+        first_letter = picture[row + down - 9 : row + down + 1, column + east : column + 7]
+        assert strokes(first_letter) >= 4, f"A{number}"
+    for letter, index in (("B", 1), ("C", 2), ("D", 3)):
+        row, column = pixel_of(scene, index * 1.6, 25.6)
+        tops_of_the_letters = picture[row + down - 9 : row + 7, column + east : column + east + 20]
+        assert strokes(tops_of_the_letters) >= 3, f"{letter}16"
 
 
 # --- The world --------------------------------------------------------------
@@ -227,11 +372,14 @@ def test_the_pad_carries_its_mark(kinds):
     scene = scene_at(kinds, cx=30, cy=30)  # beside the pad, which is cells 3 to 14
     picture = top.render(scene)
     mark = (picture == look.PAD_MARK).all(axis=2)
-    assert mark.sum() > 50
+    assert mark.sum() > 8
     rows, columns = np.nonzero(mark)
-    # The bolt stands in the middle of the pad, 0.9 m in both directions.
+    # The bolt stands in the middle of the pad, 0.9 m in both directions,
+    # and is a quarter as tall as the pad is wide.
     row, column = pixel_of(scene, 0.9, 0.9)
-    assert abs(rows.mean() - row) < 4 and abs(columns.mean() - column) < 4
+    assert abs(rows.mean() - row) < 3 and abs(columns.mean() - column) < 3
+    side_px = look.TOP_PAD_MARK_SIZE * 1.2 * PX_PER_M
+    assert 0.7 * side_px < rows.max() - rows.min() + 1 <= side_px
 
 
 # --- What moves -------------------------------------------------------------
@@ -386,9 +534,9 @@ def test_far_outside_the_world_the_turtle_is_the_middle_of_a_picture_of_nothing(
     # More than half a window from the world: no cell of it is in the picture.
     drawn = (picture != look.OUTSIDE).any(axis=2)
     rows, columns = np.nonzero(drawn)
-    # What is drawn is the turtle, its ring and its arrowhead, whose tip is
-    # 1.75 ring radii from the middle.
-    reach_px = 2.0 * look.TOP_MARKER_RADIUS_M * PX_PER_M
+    # What is drawn is the turtle, its plate and its arrowhead, with the
+    # dark edge around the arrowhead's tip.
+    reach_px = (look.TOP_ARROW_TIP + 0.2) * look.TOP_MARKER_RADIUS_M * PX_PER_M
     assert np.hypot(rows + 0.5 - MIDDLE, columns + 0.5 - MIDDLE).max() < reach_px
 
 

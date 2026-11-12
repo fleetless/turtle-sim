@@ -2,8 +2,9 @@
 """The `top` camera: the map around the turtle, north up.
 
 A window of 12 m x 12 m, centred on the turtle, at four pixels a cell: the
-cells by their kind with a hint of height, the lines between the squares and
-their names, the pad, then the trail, the path, the target and the turtle.
+cells by their kind with a hint of height, the lines between the squares,
+the pad, and each square's name on top of whatever stands in its corner;
+then the trail, the path, the target and the turtle.
 
 The world is drawn once, whole, and kept until a cell changes. A picture is
 then a window cut from it with the few things that move drawn on top. Where
@@ -102,7 +103,12 @@ def _window(world: np.ndarray, top: int, left: int, size: int) -> np.ndarray:
 
 
 def _draw_turtle(picture: np.ndarray, scene: Scene, pixels, length) -> None:
-    """A ring and an arrowhead that say where it is and where it looks, and the turtle in them."""
+    """A plate and an arrowhead that say where it is and where it looks, and the turtle on them.
+
+    The plate covers what lies under the turtle, so nothing there is taken
+    for a part of it. Plate and arrowhead are pale with a dark edge: one of
+    the two shows on every floor.
+    """
     ahead = np.array([math.cos(scene.heading), math.sin(scene.heading)])
     left = np.array([-ahead[1], ahead[0]])
     centre = np.array([scene.x, scene.y])
@@ -110,13 +116,15 @@ def _draw_turtle(picture: np.ndarray, scene: Scene, pixels, length) -> None:
     def circle(at, radius_m: float, colour, thickness: int = cv2.FILLED) -> None:
         cv2.circle(picture, pixels(at)[0], length(radius_m), colour, thickness, cv2.LINE_AA, SHIFT)
 
-    ring = look.TOP_MARKER_RADIUS_M
-    circle(centre, ring, look.TURTLE_MARKER, look.TOP_MARKER_RING_PX)
-    tip = centre + look.TOP_ARROW_TIP * ring * ahead
-    base = centre + look.TOP_ARROW_BASE * ring * ahead
-    to_the_side = look.TOP_ARROW_HALF_WIDTH * ring * left
-    arrowhead = [tip, base + to_the_side, base - to_the_side]
-    cv2.fillConvexPoly(picture, pixels(arrowhead), look.TURTLE_MARKER, cv2.LINE_AA, SHIFT)
+    plate, edge = look.TOP_MARKER_RADIUS_M, look.TOP_MARKER_EDGE_PX
+    circle(centre, plate, look.TURTLE_MARKER)
+    circle(centre, plate, look.TURTLE_MARKER_EDGE, edge)
+    tip = centre + look.TOP_ARROW_TIP * plate * ahead
+    base = centre + look.TOP_ARROW_BASE * plate * ahead
+    to_the_side = look.TOP_ARROW_HALF_WIDTH * plate * left
+    arrowhead = pixels([tip, base + to_the_side, base - to_the_side])
+    cv2.fillConvexPoly(picture, arrowhead, look.TURTLE_MARKER, cv2.LINE_AA, SHIFT)
+    cv2.polylines(picture, [arrowhead], True, look.TURTLE_MARKER_EDGE, edge, cv2.LINE_AA, SHIFT)
 
     # The head first: the shell lies over where it joins.
     r = TURTLE_RADIUS_M
@@ -139,7 +147,7 @@ def _draw_world(kinds: np.ndarray) -> np.ndarray:
     """The whole world, north up."""
     north_up = np.flipud(kinds)
     picture = _enlarge(np.flipud(cell_colours(kinds)))
-    _draw_squares(picture)
+    _draw_lines(picture)
     _draw_pad_mark(picture, north_up)
 
     # How far a block's shadow reaches, per pixel: it stands for its height.
@@ -152,14 +160,23 @@ def _draw_world(kinds: np.ndarray) -> np.ndarray:
     )
     _cast_shadows(picture, reach)
     _draw_blocks(picture, north_up, reach)
+    # Last, so a name is read whatever stands in its square's corner: the
+    # garden's own wall runs through every corner of column A and row 16.
+    _draw_names(picture)
     return picture
 
 
 _world = Remembered(_draw_world)
 
 
-def _draw_squares(picture: np.ndarray) -> None:
-    """The lines between the squares and each square's name in its corner."""
+def _thinly(picture: np.ndarray, drawn: np.ndarray) -> None:
+    """Lays what was drawn on a copy over the picture, as thin as the lines and names are."""
+    opacity = look.TOP_LINE_OPACITY
+    cv2.addWeighted(drawn, opacity, picture, 1.0 - opacity, 0.0, dst=picture)
+
+
+def _draw_lines(picture: np.ndarray) -> None:
+    """The lines between the squares, on the floor: what stands on it stands on them too."""
     rows, columns = picture.shape[:2]
     step = SQUARE_CELLS * SCALE
     drawn = picture.copy()
@@ -167,6 +184,14 @@ def _draw_squares(picture: np.ndarray) -> None:
         drawn[:, column] = look.SQUARE_LINES
     for row in range(rows - step, 0, -step):
         drawn[row] = look.SQUARE_LINES
+    _thinly(picture, drawn)
+
+
+def _draw_names(picture: np.ndarray) -> None:
+    """Each square's name in its north-west corner."""
+    rows, columns = picture.shape[:2]
+    step = SQUARE_CELLS * SCALE
+    drawn = picture.copy()
     for west in range(0, columns, step):
         for south in range(0, rows, step):
             # The squares are named A1 to P16. A world that is larger has
@@ -187,8 +212,7 @@ def _draw_squares(picture: np.ndarray) -> None:
                 look.TOP_NAME_STROKE_PX,
                 cv2.LINE_AA,
             )
-    opacity = look.TOP_LINE_OPACITY
-    cv2.addWeighted(drawn, opacity, picture, 1.0 - opacity, 0.0, dst=picture)
+    _thinly(picture, drawn)
 
 
 def _draw_pad_mark(picture: np.ndarray, north_up: np.ndarray) -> None:
