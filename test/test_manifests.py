@@ -76,9 +76,10 @@ def test_what_a_packages_tests_use_is_declared(package):
     assert missing(package, list((package / "test").rglob("*.py")), ANY) == []
 
 
-def test_all_four_packages_are_read():
+def test_every_package_is_read():
     assert [package.name for package in PACKAGES] == [
         "fleetless_turtle_bringup",
+        "fleetless_turtle_cameras",
         "fleetless_turtle_msgs",
         "fleetless_turtle_sim",
         "fleetless_turtle_viewer",

@@ -6,7 +6,8 @@
 #   ./run-tests.sh [lint|unit|ros|yaml|image|all]     (default: all)
 #
 #   lint    ruff, shellcheck and actionlint
-#   unit    pytest on the simulation core, in plain Python without ROS
+#   unit    pytest on the simulation core and the cameras' renderers, in plain
+#           Python without ROS
 #   ros     colcon build and colcon test in ROS 2 Jazzy
 #   yaml    the shipped fleetless.yaml against the contracts schema, and
 #           the release script's tests
@@ -50,13 +51,15 @@ run_lint() {
 
 run_unit() {
     build_unit_image
-    # The core's own tests, and the ones that hold the repository together
-    # (the shipped map against its script). The same core tests run again
-    # under `ros`, there against Ubuntu's numpy and OpenCV.
+    # The core's own tests, the renderers', and the ones that hold the
+    # repository together (the shipped map against its script). The same
+    # core and renderer tests run again under `ros`, there against Ubuntu's
+    # numpy and OpenCV.
     docker run --rm --name "$NAME-unit" -v "$PWD:/src:ro" -w /src \
-        -e PYTHONPATH=/src/ros/fleetless_turtle_sim -e PYTHONDONTWRITEBYTECODE=1 \
+        -e PYTHONPATH=/src/ros/fleetless_turtle_sim:/src/ros/fleetless_turtle_cameras \
+        -e PYTHONDONTWRITEBYTECODE=1 \
         "$IMAGE-unit" python -m pytest -q -p no:cacheprovider --import-mode=importlib \
-        ros/fleetless_turtle_sim/test/core test
+        ros/fleetless_turtle_sim/test/core ros/fleetless_turtle_cameras/test/render test
 }
 
 run_ros() {

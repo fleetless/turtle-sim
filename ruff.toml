@@ -7,4 +7,4 @@ extend-exclude = ["ros/fleetless_turtle_viewer/web/vendor"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [lint.isort]
-known-first-party = ["fleetless_turtle_sim", "fleetless_turtle_viewer"]
+known-first-party = ["fleetless_turtle_sim", "fleetless_turtle_viewer", "fleetless_turtle_cameras"]

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<package format="3">
+  <name>fleetless_turtle_cameras</name>
+  <!-- The image carries the version (org.opencontainers.image.version).
+       These packages are not released on their own. -->
+  <version>0.0.0</version>
+  <description>The turtle's two cameras: renderers on the CPU (no ROS) and the node around them.</description>
+  <maintainer email="hello@fleetless.dev">Dehne Robotik GmbH</maintainer>
+  <license>Apache-2.0</license>
+  <url type="repository">https://github.com/fleetless/turtle-sim</url>
+
+  <!-- The renderers: arrays, and OpenCV to draw lines and letters. -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <!-- What the world is made of: the simulator's constants, which import no ROS. -->
+  <exec_depend>fleetless_turtle_sim</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
