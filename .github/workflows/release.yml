@@ -1,0 +1,327 @@
+# SPDX-License-Identifier: Apache-2.0
+# Release: this repository's `main`, as the next version of the image.
+#
+# Press "Run workflow" on main. The version comes from the Conventional
+# Commits since the last tag (.github/release/release.mjs); the first one
+# is 0.1.0. Nothing in the repository carries the version: it is the tag
+# and the image tag.
+#
+# Both architectures are built and smoke-tested first, each on a runner of
+# its own kind. Only when both are through does anything get a name: the
+# tag vX.Y.Z, the image as ghcr.io/fleetless/turtle-sim:X.Y.Z and :latest,
+# and a GitHub release whose notes name the bridge inside. Nothing deploys
+# the image and nothing records it anywhere else.
+#
+# A run that failed can be started again: a tag already on HEAD continues
+# that release, an image already at that version is not built again, and an
+# existing GitHub release is left alone.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: auto, from the commits; an override only raises it
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/fleetless/turtle-sim
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The commit's check runs, for "verify passed on this commit".
+      checks: read
+      # The registry, for "already built?".
+      packages: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      bridge: ${{ steps.bridge.outputs.version }}
+      digest: ${{ steps.existing.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: main, and nothing but main
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "Release runs on main, not $GITHUB_REF" >&2; exit 1; }
+          git fetch -q origin main
+          [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main moved after this run started; run it again" >&2; exit 1; }
+      - name: the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          tag="$(node .github/release/release.mjs tag-at-head)"
+          if [ -n "$tag" ]; then
+            version="${tag#v}"
+            echo "HEAD already carries $tag: continuing that release"
+          else
+            version="$(node .github/release/release.mjs next --bump "$BUMP" --first 0.1.0)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # The release builds the image and runs its smoke test, and nothing
+      # else. The unit tests and the ROS tests are verify's, so a commit
+      # verify has not passed is not released.
+      - name: verify passed on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+        run: node .github/release/release.mjs check-passed --sha "$COMMIT" --check verify
+      - name: the bridge inside
+        id: bridge
+        run: |
+          set -euo pipefail
+          [ "$(grep -c '^ARG BRIDGE_VERSION=' Dockerfile)" = 1 ] \
+            || { echo "The Dockerfile must pin the bridge in exactly one 'ARG BRIDGE_VERSION=' line." >&2; exit 1; }
+          bridge="$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)"
+          [[ "$bridge" =~ ^[A-Za-z0-9.+~:-]+$ ]] || { echo "'$bridge' is not a Debian version." >&2; exit 1; }
+          echo "version=$bridge" >> "$GITHUB_OUTPUT"
+          echo "the bridge inside: $bridge"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # An image already at this version is the one an earlier run of this
+      # release published; building again would give the same tag a second
+      # digest. It has to come from this commit, though: a version is one
+      # commit, and an image of another one under its name is refused, not
+      # tagged.
+      - name: already built?
+        id: existing
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if digest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}' 2>/dev/null)"; then
+            built_from="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Image}}' \
+              | jq -r '[.. | objects | select(has("Labels")) | .Labels["org.opencontainers.image.revision"] // ""] | unique | join(" ")')"
+            [ "$built_from" = "$COMMIT" ] \
+              || { echo "$IMAGE:$VERSION exists and was built from '$built_from', not from $COMMIT. Nothing is released over it." >&2; exit 1; }
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$VERSION exists at $digest; not rebuilt"
+          fi
+
+  # One leg per architecture, each on its own kind of machine: the arm64
+  # image is built and run on arm64, not under an emulator. A leg pushes its
+  # image by digest once its own smoke test passed. A digest is not a name:
+  # nobody pulls it by accident, and no tag is written before both legs are
+  # through.
+  image:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.digest == '' }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # Each leg sets the one that carries its own name.
+      amd64: ${{ steps.digest.outputs.amd64 }}
+      arm64: ${{ steps.digest.outputs.arm64 }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      BRIDGE: ${{ needs.prepare.outputs.bridge }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - name: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: turtle-sim:release
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            REVISION=${{ needs.prepare.outputs.commit }}
+          provenance: false
+      # The labels are what a later run and the release notes go by, so
+      # they are read back from the image rather than believed.
+      - name: the labels say what was built
+        run: |
+          set -euo pipefail
+          label() { docker image inspect turtle-sim:release --format "{{ index .Config.Labels \"$1\" }}"; }
+          check() {
+            local got
+            got="$(label "$1")"
+            [ "$got" = "$2" ] || { echo "The image's label $1 is '$got', not '$2'." >&2; exit 1; }
+          }
+          check org.opencontainers.image.version "$VERSION"
+          check org.opencontainers.image.revision "$COMMIT"
+          check org.opencontainers.image.source "https://github.com/fleetless/turtle-sim"
+          check dev.fleetless.bridge.version "$BRIDGE"
+      - name: smoke test
+        env:
+          SMOKE_NAME: turtle-sim-release-smoke
+        run: docker/smoke-test.sh turtle-sim:release
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The same build again, out of the builder's cache: the layers that
+      # were just tested are the layers that go up.
+      - name: push by digest
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            REVISION=${{ needs.prepare.outputs.commit }}
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: hand the digest on
+        id: digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The push answered no digest (got '$DIGEST')." >&2; exit 1; }
+          echo "$ARCH=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE@$DIGEST is linux/$ARCH"
+
+  publish:
+    needs: [prepare, image]
+    # After both legs, or after none: an image that exists already skips
+    # them, and a skipped job would skip this one too if nobody said
+    # otherwise.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.image.result == 'success' || (needs.image.result == 'skipped' && needs.prepare.outputs.digest != '')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # The tag and the GitHub release.
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      BRIDGE: ${{ needs.prepare.outputs.bridge }}
+      EXISTING: ${{ needs.prepare.outputs.digest }}
+      AMD64: ${{ needs.image.outputs.amd64 }}
+      ARM64: ${{ needs.image.outputs.arm64 }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: something to publish
+        run: |
+          set -euo pipefail
+          if [ -z "$EXISTING" ] && { [ -z "$AMD64" ] || [ -z "$ARM64" ]; }; then
+            echo "A digest is missing: amd64 '$AMD64', arm64 '$ARM64'." >&2
+            exit 1
+          fi
+      # The tag first. It is what binds the version to this commit, and
+      # what a second press of the button continues from.
+      - name: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/release/release.mjs create-tag --version "$VERSION" --sha "$COMMIT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: one name for both architectures
+        id: image
+        run: |
+          set -euo pipefail
+          if [ -z "$EXISTING" ]; then
+            docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE@$AMD64" "$IMAGE@$ARM64"
+          fi
+          digest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')"
+          platforms="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --raw \
+            | jq -r '[.manifests[]?.platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | sort | join(" ")')"
+          [ "$platforms" = "linux/amd64 linux/arm64" ] \
+            || { echo "$IMAGE:$VERSION holds '$platforms', not linux/amd64 and linux/arm64." >&2; exit 1; }
+          # `latest` is what the one-line `docker run` pulls. It moves last,
+          # and to exactly what was just looked at.
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE@$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: the GitHub release, naming the bridge inside
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          previous="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --merged "$COMMIT" --sort=-v:refname | grep -vx "v$VERSION" | head -1 || true)"
+          {
+            echo "\`$IMAGE:$VERSION\`, also \`latest\`, for linux/amd64 and linux/arm64."
+            echo
+            echo "- Fleetless Bridge inside: \`ros-jazzy-fleetless-bridge\` \`$BRIDGE\`"
+            echo "- image: \`$IMAGE@$DIGEST\`"
+            echo "- commit: \`$COMMIT\`"
+            echo
+            echo "## Changes since ${previous:-the beginning}"
+            echo
+            git log --format='- %s' "${previous:+$previous..}$COMMIT"
+          } > "$RUNNER_TEMP/notes.md"
+          node .github/release/release.mjs github-release --version "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "done=true" >> "$GITHUB_OUTPUT"
+      - name: summary
+        if: always()
+        env:
+          # The summary runs under `if: always()`, so it reads what the
+          # steps before it reached rather than asserting it.
+          DIGEST: ${{ steps.image.outputs.digest }}
+          RELEASED: ${{ steps.release.outputs.done }}
+        run: |
+          {
+            echo "### turtle-sim v$VERSION — ${{ job.status }}"
+            echo
+            echo "- commit: \`$COMMIT\`"
+            if [ -n "$DIGEST" ]; then
+              echo "- image: \`$IMAGE@$DIGEST\`, as \`$VERSION\` and \`latest\`"
+            else
+              echo "- no image under \`$VERSION\` or \`latest\` from this run"
+            fi
+            echo "- bridge inside: \`$BRIDGE\`"
+            if [ "$RELEASED" = true ]; then
+              echo "- the GitHub release v$VERSION names all three"
+            else
+              echo "- no GitHub release: the run did not finish the release step"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

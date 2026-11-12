@@ -67,6 +67,8 @@ VOLUME /state
 
 COPY --from=build /opt/turtle/install /opt/turtle/install
 COPY maps /opt/turtle/maps
+# The configuration to publish in the console; the view hands it out.
+COPY fleetless /opt/turtle/fleetless
 COPY docker/environment.sh docker/entrypoint.sh /opt/turtle/
 # `docker exec -it turtle ros2 topic list` finds this one first.
 COPY docker/ros2 /usr/local/bin/ros2

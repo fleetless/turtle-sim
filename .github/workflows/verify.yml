@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Every pull request and every push to `main`: everything ./run-tests.sh
+# knows, one mode per step, cheapest first, so the quickest failure is the
+# first one. All of it runs in Docker; the runner brings nothing else.
+#
+# A hosted runner: this repository is meant to become public, and a pull
+# request is then a stranger's code.
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a pull request cancels the run of the push before it. Only
+# `pull_request` runs of the same pull request share a group; every other
+# run (a push to `main`) gets a group of its own, `run_id`, and is never
+# cancelled.
+concurrency:
+  group: verify-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The job's name is the check's name. release.yml asks for it by that
+  # name before it releases a commit.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: lint
+        run: ./run-tests.sh lint
+      - name: unit
+        run: ./run-tests.sh unit
+      - name: yaml
+        run: ./run-tests.sh yaml
+      - name: ros
+        run: ./run-tests.sh ros
+      - name: image
+        run: ./run-tests.sh image

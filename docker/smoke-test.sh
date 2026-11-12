@@ -60,6 +60,10 @@ pass "the image's HEALTHCHECK reports healthy"
 curl -fsS "http://127.0.0.1:$port/" | grep -qF "<title>turtle-sim</title>" || fail "/ is not the page"
 pass "/ is the page"
 
+curl -fsS "http://127.0.0.1:$port/fleetless.yaml" | grep -qx "fleetless: 1" \
+    || fail "/fleetless.yaml is not the shipped configuration"
+pass "/fleetless.yaml is the shipped configuration"
+
 [ "$(docker exec "$name" id -u)" != 0 ] || fail "the container runs as root"
 pass "the container does not run as root"
 
