@@ -11,6 +11,10 @@
   <license>Apache-2.0</license>
   <url type="repository">https://github.com/fleetless/turtle-sim</url>
 
+  <!-- The core: arrays, and OpenCV to read the map file. -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+
   <test_depend>python3-pytest</test_depend>
 
   <export>
