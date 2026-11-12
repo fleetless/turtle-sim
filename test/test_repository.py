@@ -18,8 +18,9 @@ OPS = "fleetless/" + "fleetless"
 # The name itself, wherever it stands: with an issue number, in a link, in
 # plain words. What only begins like it is another name: a repository
 # called fleetless-something, or this repository's own packages, whose
-# names go on with an underscore.
-NAMES_THE_OPS_REPOSITORY = re.compile(re.escape(OPS) + r"(?![\w-])")
+# names go on with an underscore. In any case of letters: GitHub reads the
+# name with capitals just the same.
+NAMES_THE_OPS_REPOSITORY = re.compile(re.escape(OPS) + r"(?![\w-])", re.IGNORECASE)
 
 
 def tracked_files():
@@ -61,6 +62,8 @@ def test_no_file_sends_a_reader_to_the_private_ops_repository():
         f"git@github.com:{OPS}.git",
         f"as {OPS} has it.",
         OPS,
+        f"see {OPS.title()}#898",
+        f"https://github.com/{OPS.upper()}/issues/898",
     ],
 )
 def test_the_guard_finds_the_name_however_it_is_written(text):
@@ -77,6 +80,8 @@ def test_the_guard_finds_the_name_however_it_is_written(text):
         "https://github.com/fleetless/turtle-sim",
         "fleetless/turtle.fleetless.yaml",
         "ros/fleetless_turtle_sim/fleetless_turtle_sim/node.py",
+        f"https://github.com/{OPS.title()}-Bridge",
+        "GHCR.IO/FLEETLESS/TURTLE-SIM",
     ],
 )
 def test_the_guard_leaves_other_names_alone(text):
