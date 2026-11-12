@@ -77,3 +77,28 @@ Sent with every `/scan` message, 5 Hz.
 Ray `i` points along `angle_min + i × angle_increment` radians from the
 turtle's heading, counter-clockwise. A range is metres, or `null` where the
 ray hit nothing.
+
+### `plan`
+
+Sent on connect and whenever `/turtle/plan` changes: when a goal has planned
+its path, when it plans again, and when it ends.
+
+```json
+{"type": "plan", "points": [[0.85, 0.85], [4.85, 6.95], [10.05, 18.05]]}
+```
+
+`points` are `[x, y]` in metres in the `map` frame: where the turtle stood
+when the path was planned, the waypoints, and last the target. Without a
+goal the list is empty. The page draws the part that still lies ahead of
+the turtle, and a pin on the target.
+
+### `trail`
+
+Sent on connect and whenever `/turtle/trail` changes, at most once a second.
+
+```json
+{"type": "trail", "points": [[0.85, 0.85], [0.95, 0.85], [1.05, 0.86]]}
+```
+
+`points` are `[x, y]` in metres, oldest first: where the turtle has been,
+a point every 0.1 m, the newest 2000. Empty while the trail is off.

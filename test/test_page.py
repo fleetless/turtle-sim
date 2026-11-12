@@ -41,6 +41,7 @@ def test_the_page_has_the_files_it_names():
         "index.html",
         "main.js",
         "panel.js",
+        "path.js",
         "scan.js",
         "scene.js",
         "style.css",

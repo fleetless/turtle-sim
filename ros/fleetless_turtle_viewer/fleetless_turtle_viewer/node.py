@@ -29,6 +29,7 @@ from aiohttp import web
 from ament_index_python.packages import get_package_share_directory
 from fleetless_turtle_msgs.msg import TurtleStatus, World
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path as PathMsg
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
@@ -78,6 +79,19 @@ def _frame(**fields) -> str:
     return json.dumps(fields, separators=(",", ":"), allow_nan=False)
 
 
+def _points(path: PathMsg) -> list[list[float]]:
+    """A path's positions as [x, y] in metres, to the millimetre.
+
+    A pose that is no place is left out: JSON has no word for it.
+    """
+    points = []
+    for pose in path.poses:
+        x, y = pose.pose.position.x, pose.pose.position.y
+        if math.isfinite(x) and math.isfinite(y):
+            points.append([round(x, 3), round(y, 3)])
+    return points
+
+
 # --- The ROS side ------------------------------------------------------------
 
 
@@ -114,6 +128,8 @@ class ViewerNode(Node):
         self.create_subscription(BatteryState, "battery_state", self._on_battery, 10)
         self.create_subscription(LaserScan, "scan", self._on_scan, 10)
         self.create_subscription(World, "turtle/world", self._on_world, LATCHED)
+        self.create_subscription(PathMsg, "turtle/plan", self._on_plan, LATCHED)
+        self.create_subscription(PathMsg, "turtle/trail", self._on_trail, LATCHED)
         self.create_timer(BRIDGE_CHECK_PERIOD_S, self._look_for_the_bridge)
 
     def _port(self) -> int:
@@ -204,6 +220,12 @@ class ViewerNode(Node):
             ),
         )
 
+    def _on_plan(self, path: PathMsg) -> None:
+        self._deliver("plan", _frame(type="plan", points=_points(path)))
+
+    def _on_trail(self, path: PathMsg) -> None:
+        self._deliver("trail", _frame(type="trail", points=_points(path)))
+
 
 # --- The HTTP side -----------------------------------------------------------
 
@@ -233,7 +255,7 @@ class Hub:
     """Every connected browser, and what a new one is told first."""
 
     # A new page needs these at once and cannot wait for the next change.
-    REMEMBERED = ("world", "scan")
+    REMEMBERED = ("world", "scan", "plan", "trail")
 
     def __init__(self):
         self.clients: set[Client] = set()
