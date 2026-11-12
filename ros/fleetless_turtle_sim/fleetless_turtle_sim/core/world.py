@@ -137,6 +137,11 @@ class World:
     def is_pad(self, cx: int, cy: int) -> bool:
         return in_grid(cx, cy) and bool(self.kinds[cy, cx] == PAD)
 
+    @property
+    def blocking(self) -> np.ndarray:
+        """Where a cell blocks, as `[cy, cx]`, for whoever asks about many cells at once."""
+        return self._blocking
+
     def set_kind(self, cx: int, cy: int, kind: int) -> None:
         self.kinds[cy, cx] = kind
         self._blocking[cy, cx] = kind in BLOCKING

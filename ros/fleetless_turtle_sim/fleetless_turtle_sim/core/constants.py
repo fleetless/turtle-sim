@@ -143,6 +143,26 @@ STUCK_PROGRESS_M = 0.02
 STUCK_WINDOW_S = 5.0
 """Less than this much progress in this long, while a goal drives, is stuck."""
 
+START_SEARCH_CELLS = 3
+"""A turtle that stands too close to an obstacle to plan from its own cell
+starts at the nearest traversable cell at most this many cells away."""
+
+FACING_TOLERANCE = math.radians(5.0)
+"""The turtle turns on the spot until it faces the next waypoint this well,
+then drives."""
+
+STEERING_GAIN = 4.0
+"""While it drives, the turtle turns towards the waypoint at this many rad/s
+per radian it is off."""
+
+HOLD_HEADING_WITHIN_M = 0.05
+"""This close to a waypoint the turtle stops steering: the bearing to a point
+almost reached swings with every millimetre."""
+
+STOP_WITHIN_M = 0.002
+"""This close to a waypoint the turtle stops braking by the book and just
+stops. The book alone would have it creep up to the point for ever."""
+
 # --- The trail --------------------------------------------------------------
 
 TRAIL_SPACING_M = 0.1
