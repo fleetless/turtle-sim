@@ -52,6 +52,10 @@ does not count as touching it once floating point has had its say."""
 STEP_S = 0.02
 """The simulation step, fixed: 50 Hz."""
 
+TIME_TOLERANCE_S = 1e-9
+"""Slack on a time. Times are sums of steps, and "after 0.5 s" must not
+depend on how twenty-five times 0.02 happens to round."""
+
 LINEAR_SPEED_LIMIT = 0.5
 """m/s, forwards and backwards."""
 
