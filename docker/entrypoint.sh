@@ -16,23 +16,13 @@
 # a form that is safe at every moment.
 set -eo pipefail
 
-# An empty FLEETLESS_CLOUD_URL is an unset one. docker-compose.yaml names
-# every variable, and one that nobody set arrives here empty. The bridge
-# would take the empty text for the cloud's address; without the variable it
-# uses its own default. (An empty FLEETLESS_TOKEN needs no such line: both
-# the launch file and the bridge read it as no token.)
-if [ -z "${FLEETLESS_CLOUD_URL:-}" ]; then
-    unset FLEETLESS_CLOUD_URL
-fi
-
-if [ "$#" -gt 0 ]; then
-    exec /opt/turtle/start.sh "$@"
-fi
-
-# The container's stderr under a second number, for the turtle: it gets this
-# one, whatever has become of this shell's own by then (see `stop`).
+# First of all, an ear for a stop. Until the trap below is set, a stop is
+# lost, and Docker kills the container ten seconds later. So nothing that
+# can wait stands before it, only what `stop` needs to find when it runs:
+# the two things it writes and reads, and the container's stderr under a
+# second number. That one is for the turtle, which gets it whatever has
+# become of this shell's own by then.
 exec 3>&2
-
 stopping=
 turtle=
 # shellcheck disable=SC2317  # reached through the trap below
@@ -53,6 +43,30 @@ stop() {
     [ -z "$turtle" ] || kill -USR1 "$turtle" || true
 }
 trap stop INT TERM
+
+# An empty FLEETLESS_CLOUD_URL is an unset one. docker-compose.yaml names
+# every variable, and one that nobody set arrives here empty. The bridge
+# would take the empty text for the cloud's address; without the variable it
+# uses its own default. (An empty FLEETLESS_TOKEN needs no such line: both
+# the launch file and the bridge read it as no token.)
+if [ -z "${FLEETLESS_CLOUD_URL:-}" ]; then
+    unset FLEETLESS_CLOUD_URL
+fi
+
+if [ "$#" -gt 0 ]; then
+    # A command in the turtle's place. start.sh sets up its environment and
+    # hands it the place. It is read into this shell and not started beside
+    # it: a new process would have to ask for the signals again, and until
+    # it had, a stop would be lost a second time. A stop before the command
+    # has taken over is answered with 130, here as in start.sh, and one that
+    # came before this line is not forgotten. The descriptor was the
+    # turtle's.
+    trap 'exit 130' INT TERM
+    [ -z "$stopping" ] || exit 130
+    exec 3>&-
+    # shellcheck source=/dev/null
+    source /opt/turtle/start.sh "$@"
+fi
 
 # In the background, so this shell can wait and listen at once. A script's
 # background job is born with SIGINT ignored, and so is all it starts until

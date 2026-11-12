@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Sets up the turtle's ROS environment and runs one thing in it: the command
-# it was given or, without one, the turtle. Only the entrypoint calls it.
+# it was given or, without one, the turtle. Only the entrypoint calls it: it
+# starts this script for the turtle, and reads it into its own shell for a
+# command.
 #
 # A bridge checkout mounted at /bridge-src is built first and runs in place
 # of the installed package. That is how an unreleased bridge is tried:
@@ -11,7 +13,7 @@
 # A stop while this script runs. For the turtle, the entrypoint watches: it
 # sends SIGUSR1, which this shell does not catch, so it ends here and now,
 # and the container with it; a build of /bridge-src that is under way is
-# not waited for. With a command, this script is the container's first
+# not waited for. With a command, these lines run in the container's first
 # process until the command takes over, and the trap below is what hears a
 # stop; a build of /bridge-src is then finished first, which may take longer
 # than Docker waits.
