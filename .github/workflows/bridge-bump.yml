@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+# The bridge in the image is pinned to one exact version, in the
+# Dockerfile's `ARG BRIDGE_VERSION=` line. Once a day this asks Fleetless's
+# apt repository which version it serves (scripts/bridge-apt-version). A
+# newer one becomes a pull request that changes that one line,
+# `fix(image): bridge <version>`. Its `verify` builds the image with the new
+# bridge and runs the smoke test. Nothing merges it but a person or an
+# agent: a bridge that needs more than a new pin gets it on that branch.
+#
+# The pull request is opened as the organisation's App, not with
+# GITHUB_TOKEN: a pull request GITHUB_TOKEN opens starts no workflow, and
+# this one exists to be checked.
+name: bridge-bump
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: bridge-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    # A fork has neither the App nor a reason to follow our apt repository.
+    if: ${{ github.repository == 'fleetless/turtle-sim' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # No persisted credential: the push below goes up as the App, so
+          # that the pull request's checks run.
+          persist-credentials: false
+      - name: what apt serves, and what the Dockerfile pins
+        id: versions
+        run: |
+          set -euo pipefail
+          [ "$(grep -c '^ARG BRIDGE_VERSION=' Dockerfile)" = 1 ] \
+            || { echo "The Dockerfile must pin the bridge in exactly one 'ARG BRIDGE_VERSION=' line." >&2; exit 1; }
+          pinned="$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)"
+          served="$(scripts/bridge-apt-version)"
+          # Debian's version alphabet, checked again here: the value goes
+          # into a sed expression, a branch name and a commit message.
+          [[ "$served" =~ ^[A-Za-z0-9.+~:-]+$ ]] || { echo "'$served' is not a Debian version." >&2; exit 1; }
+          if dpkg --compare-versions "$served" gt "$pinned"; then newer=true; else newer=false; fi
+          {
+            echo "pinned=$pinned"
+            echo "served=$served"
+            echo "newer=$newer"
+          } >> "$GITHUB_OUTPUT"
+          echo "apt serves $served, the Dockerfile pins $pinned"
+      # Asked for on every run, also when there is nothing to bump: a missing
+      # App should be known before the day it is needed.
+      - name: the App's secrets reach this repository
+        env:
+          HAVE_ID: ${{ secrets.FLEETLESS_APP_ID != '' }}
+          HAVE_KEY: ${{ secrets.FLEETLESS_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAVE_ID" != true ] || [ "$HAVE_KEY" != true ]; then
+            echo "::error::FLEETLESS_APP_ID and FLEETLESS_APP_PRIVATE_KEY do not reach $GITHUB_REPOSITORY, so no pull request can be opened as the App. Sharing the organisation's secrets with this repository is an owner's job."
+            exit 1
+          fi
+      - uses: actions/create-github-app-token@v3
+        id: app
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.FLEETLESS_APP_ID }}
+          private-key: ${{ secrets.FLEETLESS_APP_PRIVATE_KEY }}
+          owner: fleetless
+          repositories: turtle-sim
+          permission-contents: write
+          permission-pull-requests: write
+      - name: the App is installed on this repository
+        if: ${{ steps.app.outcome != 'success' }}
+        run: |
+          echo "::error::The organisation's App gave no token for $GITHUB_REPOSITORY. Either it is not installed on this repository or its key is wrong; the step above has GitHub's own answer. Installing it is an owner's job."
+          exit 1
+      - name: the pull request
+        if: ${{ steps.versions.outputs.newer == 'true' }}
+        env:
+          SERVED: ${{ steps.versions.outputs.served }}
+          PINNED: ${{ steps.versions.outputs.pinned }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          # A Debian version may hold `~` and `:`; a git ref may not.
+          branch="deps/bridge-$(printf '%s' "$SERVED" | tr '~:' '--')"
+          if [ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "a pull request for $branch is already open"; exit 0
+          fi
+          git switch -q -c "$branch"
+          sed -i -E "s|^ARG BRIDGE_VERSION=.*\$|ARG BRIDGE_VERSION=$SERVED|" Dockerfile
+          [ "$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)" = "$SERVED" ] \
+            || { echo "The Dockerfile's pin did not move to $SERVED." >&2; exit 1; }
+          git -c user.name="fleetless-release[bot]" -c user.email="fleetless-release[bot]@users.noreply.github.com" \
+            commit -q -am "fix(image): bridge $SERVED"
+          # The header through git's env-var config, not `-c` on the command
+          # line: an argv is visible to anything that lists processes.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git push -q --force origin "HEAD:refs/heads/$branch"
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base main \
+            --title "fix(image): bridge $SERVED" \
+            --body "apt serves \`ros-jazzy-fleetless-bridge\` $SERVED; the Dockerfile pinned $PINNED. This moves the pin, one line. \`verify\` builds the image with the new bridge and runs the smoke test. A bridge can need more than a new pin, so this is merged by hand, not by the workflow."

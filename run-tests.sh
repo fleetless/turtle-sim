@@ -8,7 +8,8 @@
 #   lint    ruff, shellcheck and actionlint
 #   unit    pytest on the simulation core, in plain Python without ROS
 #   ros     colcon build and colcon test in ROS 2 Jazzy
-#   yaml    the shipped fleetless.yaml against the contracts schema
+#   yaml    the shipped fleetless.yaml against the contracts schema, and
+#           the release script's tests
 #   image   builds the image and runs its smoke test
 #
 # Names, for a machine that is shared:
@@ -65,8 +66,18 @@ run_ros() {
 }
 
 run_yaml() {
-    echo "run-tests.sh: no fleetless.yaml to validate yet." >&2
-    return 1
+    # What runs on Node: the shipped fleetless.yaml against the schema of
+    # the pinned @fleetless/contracts, and the release script's own tests,
+    # which play through a git history in a temporary directory. A copy,
+    # because the source is mounted read-only and pnpm installs beside it.
+    docker run --rm --name "$NAME-yaml" -v "$PWD:/src:ro" node:22-bookworm bash -euc '
+        mkdir /work && cd /work
+        cp -r /src/package.json /src/pnpm-lock.yaml /src/scripts /src/fleetless /src/.github .
+        corepack enable
+        pnpm install --frozen-lockfile
+        node scripts/validate-fleetless-yaml.mjs
+        node --test --test-reporter=spec ".github/release/*.test.mjs"
+    '
 }
 
 run_image() {

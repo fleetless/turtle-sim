@@ -1,0 +1,269 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What the turtle exposes in Fleetless: its fleetless.yaml. Publish it on the
+# robot's configuration page in the console, or over MCP. It names no role
+# and has no access section, so it publishes into any organisation as it is.
+#
+# Every description is written for a caller who knows nothing else. It is
+# what an MCP client reads before it acts, so it says what the value means,
+# its range, and what the turtle does about it.
+#
+# The world, for whoever reads on: a square garden of 256 x 256 cells, each
+# 0.1 m wide. A cell is (x, y) from 0 to 255, counted from the south-west
+# corner; x grows east, y north. On top lie 16 x 16 squares of 16 x 16 cells,
+# named like a chess board: the letter A to P follows x, the number 1 to 16
+# follows y. The charging pad is in square A1.
+fleetless: 1
+
+datapoints:
+  # --- The battery ------------------------------------------------------------
+  battery_soc:
+    topic: /battery_state
+    type: sensor_msgs/msg/BatteryState
+    field: percentage
+    description: |
+      Battery charge in percent, 0 to 100. Standing empties a full battery
+      in an hour, driving at full speed in five minutes. On the charging
+      pad in square A1 it is full again after one minute. At 0 % the turtle
+      does not stop: it crawls at a tenth of its speed until the battery is
+      back at 5 %.
+    numeric:
+      scale: 100
+      unit: "%"
+      decimals: 0
+    retention:
+      enabled: true
+      interval_seconds: 10
+    chart:
+      y_min: 0
+      y_max: 100
+      style: line
+    alerts:
+      battery_low:
+        name: Battery low
+        severity: warning
+        condition: { fire_at: 20, resolve_at: 25 }
+      battery_empty:
+        name: Battery empty
+        severity: error
+        condition: { fire_at: 1, resolve_at: 5 }
+
+  on_charger:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: on_charger
+    description: |
+      True while the turtle stands on the charging pad in square A1. There
+      the battery charges, whether the turtle moves or not.
+
+  crawling:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: crawling
+    description: |
+      True while the battery is empty and the turtle's speed limits are
+      reduced: a tenth of its linear speed, a quarter of its turn rate. It
+      starts at 0 % and ends once the battery is back at 5 %. The way out
+      is the charging pad.
+    alerts:
+      crawling:
+        name: The turtle crawls on an empty battery
+        severity: warning
+        condition: { fire_at: true }
+
+  # --- Where the turtle is ------------------------------------------------------
+  cell_x:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: cell_x
+    rate_throttle_hz: 2
+    description: |
+      The x of the cell the turtle's centre is in, 0 to 255, counted from
+      the west edge. A cell is 0.1 m wide.
+    numeric:
+      decimals: 0
+
+  cell_y:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: cell_y
+    rate_throttle_hz: 2
+    description: |
+      The y of the cell the turtle's centre is in, 0 to 255, counted from
+      the south edge. A cell is 0.1 m wide.
+    numeric:
+      decimals: 0
+
+  square:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: square
+    rate_throttle_hz: 2
+    description: |
+      The square the turtle is in, A1 to P16. The letter follows x from
+      west to east, the number y from south to north, as on a chess board.
+      A square is 16 x 16 cells, 1.6 m wide.
+
+  heading:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: heading_deg
+    rate_throttle_hz: 2
+    description: |
+      Where the turtle looks, in degrees from 0 to 360. 0 is east, 90 is
+      north, 180 west, 270 south: counter-clockwise, as ROS counts yaw.
+    numeric:
+      unit: "°"
+      decimals: 0
+
+  speed:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: speed
+    rate_throttle_hz: 2
+    description: |
+      Speed along the heading in m/s, negative when the turtle drives
+      backwards. At most 0.5 either way; 0.05 while it crawls.
+    numeric:
+      unit: m/s
+      decimals: 2
+
+  mode:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: mode
+    rate_throttle_hz: 2
+    description: |
+      What the turtle is doing, as one word. `teleop`: a velocity command
+      other than zero arrived within the last 0.5 s. `charging`: it stands
+      on the charging pad below 100 %. `idle`: neither.
+
+  odometer:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: odometer_m
+    description: |
+      Distance driven since the simulator started, in metres, forwards and
+      backwards alike. It only grows. The simulated odometry is exact.
+    numeric:
+      unit: m
+      decimals: 1
+    retention:
+      enabled: true
+      interval_seconds: 60
+
+  # --- What is in the way -------------------------------------------------------
+  bumper:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: bumper
+    description: |
+      True while the turtle pushed against a wall, a rock, water or the
+      edge of the world within the last 0.2 s. It does not slide along an
+      obstacle: back off or turn.
+
+  collisions:
+    topic: /turtle/status
+    type: fleetless_turtle_msgs/msg/TurtleStatus
+    field: collisions
+    rate_throttle_hz: 2
+    description: |
+      How often the bumper has gone from false to true since the simulator
+      started. One long push counts once.
+    numeric:
+      decimals: 0
+    chart:
+      style: step
+
+  range_front:
+    topic: /range/front
+    type: sensor_msgs/msg/Range
+    field: range
+    description: |
+      Distance in metres from the turtle's centre to the nearest obstacle
+      straight ahead, 0.1 to 4.0. 4.0 means nothing is in range. The
+      turtle itself reaches 0.1 m from its centre, so 0.1 is contact.
+    numeric:
+      unit: m
+      decimals: 2
+    alerts:
+      obstacle_ahead:
+        name: Obstacle ahead
+        severity: warning
+        condition: { fire_at: 0.3, resolve_at: 0.5 }
+
+  range_left:
+    topic: /range/left
+    type: sensor_msgs/msg/Range
+    field: range
+    description: |
+      Distance in metres from the turtle's centre to the nearest obstacle
+      on its left, at 90 degrees to the heading, 0.1 to 4.0. 4.0 means
+      nothing is in range.
+    numeric:
+      unit: m
+      decimals: 2
+
+  range_right:
+    topic: /range/right
+    type: sensor_msgs/msg/Range
+    field: range
+    description: |
+      Distance in metres from the turtle's centre to the nearest obstacle
+      on its right, at 90 degrees to the heading, 0.1 to 4.0. 4.0 means
+      nothing is in range.
+    numeric:
+      unit: m
+      decimals: 2
+
+  scan:
+    topic: /scan
+    type: sensor_msgs/msg/LaserScan
+    rate_throttle_hz: 2
+    description: |
+      The laser scan, as the whole message. `ranges` holds 72 distances in
+      metres from the turtle's centre, 5 degrees apart: index 0 looks
+      straight back, index 18 to the right, index 36 straight ahead, index
+      54 to the left. A ray that hit nothing within 4.0 m is null.
+
+publishers:
+  drive:
+    topic: /cmd_vel
+    type: geometry_msgs/msg/Twist
+    description: |
+      Drives the turtle by hand: a speed along its heading and a turn rate.
+      One message is good for half a second, so send it about ten times a
+      second for as long as the turtle should move; when the messages stop,
+      the turtle stops. It speeds up and slows down at 1 m/s² and
+      6 rad/s², never drives into an obstacle, and crawls on an empty
+      battery whatever is asked of it.
+    message:
+      linear:
+        x: ${linear_speed}
+        y: 0.0
+        z: 0.0
+      angular:
+        x: 0.0
+        y: 0.0
+        z: ${angular_speed}
+    parameters:
+      linear_speed:
+        type: float64
+        min_value: -0.5
+        max_value: 0.5
+        default: 0.0
+        description: Speed along the heading in m/s. Negative drives backwards.
+      angular_speed:
+        type: float64
+        min_value: -2.0
+        max_value: 2.0
+        default: 0.0
+        description: Turn rate in rad/s. Positive turns left, counter-clockwise.
+    # The bridge's own stop, should the cloud or the app fall silent. The
+    # simulator has a second one of its own, 0.5 s after the last /cmd_vel.
+    failsafe:
+      timeout_ms: 500
+      message:
+        linear: { x: 0.0, y: 0.0, z: 0.0 }
+        angular: { x: 0.0, y: 0.0, z: 0.0 }
+    quiet_timeout_ms: 2000
