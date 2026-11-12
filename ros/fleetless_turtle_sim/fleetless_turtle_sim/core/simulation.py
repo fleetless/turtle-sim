@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """The simulation: the one object the node holds.
 
-It ties the world, the drive, the sensors and the battery together and
-advances them in fixed steps. It reads no clock: `time` is the sum of the
-steps taken, so a test runs an hour in a second and twice the same way.
+It ties the world, the drive, the sensors, the battery and the goals
+together and advances them in fixed steps. It reads no clock: `time` is the
+sum of the steps taken, so a test runs an hour in a second and twice the
+same way.
+
+One thing moves the turtle at a time: a person's velocity commands, or one
+goal. A new goal ends the one that runs, and so does a command other than
+zero.
 """
 
 import math
@@ -18,27 +23,26 @@ from .constants import (
     DISTANCE_TOLERANCE_M,
     FREE,
     GRID_CELLS,
-    PAD,
     ROCK,
     STEP_S,
     TIME_TOLERANCE_S,
     TRAIL_MAX_POINTS,
     TRAIL_SPACING_M,
     TURTLE_RADIUS_M,
-    WALL,
-    WATER,
 )
 from .drive import Drive
+from .goals import Dock, DriveTo, DriveToSquare, Goal
 from .joints import positions as joint_positions
-from .world import World, cell_centre, cell_of, circle_reaches_cell, in_grid, square_of
-
-_KIND_NAMES = {
-    FREE: "free",
-    WALL: "a wall",
-    ROCK: "a rock",
-    WATER: "water",
-    PAD: "the charging pad",
-}
+from .navigation import Point
+from .world import (
+    KIND_NAMES,
+    World,
+    cell_centre,
+    cell_of,
+    circle_reaches_cell,
+    in_grid,
+    square_of,
+)
 
 
 def _heading_deg(heading: float) -> float:
@@ -85,6 +89,11 @@ class Simulation:
         self.trail: list[tuple[float, float]] = []
         """The recorded trail, oldest point first, in metres."""
         self.trail_version = 0
+        self.goal: Goal | None = None
+        """The goal that runs, if one does."""
+        self.plan: tuple[Point, ...] = ()
+        """The path the running goal follows, in metres. Empty without one."""
+        self.plan_version = 0
         self._since_teleop = math.inf
 
     # --- Time ---------------------------------------------------------------
@@ -92,6 +101,11 @@ class Simulation:
     def step(self) -> None:
         """Advance by exactly one fixed step."""
         dt = self.step_s
+        if self.goal is not None:
+            # The goal names the command; the drive does the rest, as it
+            # does for a person, with the same limits.
+            self.drive.command(*self.goal.advance())
+            self._show_plan()
         self.drive.step(dt, crawling=self.battery.crawling)
         self.battery.step(dt, self.drive.linear, self.drive.angular, self.on_charger)
         self._since_teleop += dt
@@ -101,18 +115,66 @@ class Simulation:
 
     def command(self, linear: float, angular: float) -> None:
         """Take a velocity command: `linear.x` and `angular.z` of a Twist."""
-        self.drive.command(linear, angular)
         # Only a non-zero command is a person at the controls. A value that is
-        # not a number counted as zero.
-        linear = linear if math.isfinite(linear) else 0.0
-        angular = angular if math.isfinite(angular) else 0.0
-        if linear != 0.0 or angular != 0.0:
+        # not a number counts as zero.
+        at_the_controls = (math.isfinite(linear) and linear != 0.0) or (
+            math.isfinite(angular) and angular != 0.0
+        )
+        if self.goal is not None:
+            if not at_the_controls:
+                # A zero Twist ends nothing, and it does not take the wheel
+                # either: the bridge's failsafe sends one whenever a
+                # publisher falls silent.
+                if not (math.isfinite(linear) and math.isfinite(angular)):
+                    self.drive.non_finite_commands += 1
+                return
+            self.goal.end("teleop_override")
+        self.drive.command(linear, angular)
+        if at_the_controls:
             self._since_teleop = 0.0
+
+    # --- Goals ----------------------------------------------------------------
+
+    def drive_to(self, x: int, y: int) -> Goal:
+        """Drive to the centre of a cell."""
+        return self._accept(DriveTo(self, x, y))
+
+    def drive_to_square(self, square: str) -> Goal:
+        """Drive into a square: to the traversable cell nearest to its centre."""
+        return self._accept(DriveToSquare(self, square))
+
+    def dock(self, target_percent: float) -> Goal:
+        """Drive onto the charging pad and wait until the battery is at `target_percent`."""
+        return self._accept(Dock(self, target_percent))
+
+    def _accept(self, goal: Goal) -> Goal:
+        # One navigator. Every goal is accepted, and a newly accepted one
+        # ends the one that runs before it starts, whatever becomes of it.
+        if self.goal is not None:
+            self.goal.end("preempted")
+        self.goal = goal
+        goal.begin()
+        return goal
+
+    def goal_ended(self, goal: Goal) -> None:
+        """A goal tells the simulation that it has ended. Its last command goes with it."""
+        if goal is self.goal:
+            self.goal = None
+            self.drive.command(0.0, 0.0)
+            self._show_plan()
+
+    def _show_plan(self) -> None:
+        plan = () if self.goal is None else self.goal.path
+        if plan != self.plan:
+            self.plan = plan
+            self.plan_version += 1
 
     # --- What the services do -----------------------------------------------
 
     def reset(self) -> tuple[bool, str]:
         """Start pose, full battery, the map as loaded, trail off and empty, counters zero."""
+        if self.goal is not None:
+            self.goal.end("reset")
         if self.world.restore():
             self.world_version += 1
         self.drive = Drive(self.world, *self.world.start_pose)
@@ -133,12 +195,14 @@ class Simulation:
         if self.world.blocks(x, y):
             return (
                 False,
-                f"Cell ({x}, {y}) is {_KIND_NAMES[self.world.kind(x, y)]}. Teleport declined.",
+                f"Cell ({x}, {y}) is {KIND_NAMES[self.world.kind(x, y)]}. Teleport declined.",
             )
         centre_x, centre_y = cell_centre(x, y)
         if not self.world.fits(centre_x, centre_y):
             return False, f"The turtle does not fit on cell ({x}, {y}). Teleport declined."
         heading_deg = heading_deg % 360.0
+        if self.goal is not None:
+            self.goal.end("teleported")
         self.drive.place(centre_x, centre_y, math.radians(heading_deg))
         return True, f"The turtle is on cell ({x}, {y}), heading {heading_deg:g} degrees."
 
@@ -157,7 +221,9 @@ class Simulation:
         if self.world.kind(x, y) != kind:
             self.world.set_kind(x, y, kind)
             self.world_version += 1
-        return True, f"Cell ({x}, {y}) is {_KIND_NAMES[kind]} now."
+            if self.goal is not None:
+                self.goal.world_changed()
+        return True, f"Cell ({x}, {y}) is {KIND_NAMES[kind]} now."
 
     def set_trail(self, on: bool) -> tuple[bool, str]:
         """`True` records the trail, `False` stops and clears it."""
@@ -182,11 +248,9 @@ class Simulation:
 
     @property
     def mode(self) -> str:
-        """By precedence: teleop, charging, idle.
-
-        `docking` and `auto` rank above these; they belong to goals, and this
-        turtle has none yet.
-        """
+        """By precedence: docking, auto, teleop, charging, idle."""
+        if self.goal is not None:
+            return "docking" if self.goal.kind == "dock" else "auto"
         if self._since_teleop < COMMAND_TIMEOUT_S - TIME_TOLERANCE_S:
             return "teleop"
         if self.on_charger and self.battery.percent < FULL:

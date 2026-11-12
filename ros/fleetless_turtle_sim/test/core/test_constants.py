@@ -66,6 +66,22 @@ def test_navigation():
     assert c.GOAL_TOLERANCE_M == 0.03
     assert c.PATH_CHECK_PERIOD_S == 1.0
     assert (c.STUCK_PROGRESS_M, c.STUCK_WINDOW_S) == (0.02, 5.0)
+    assert c.START_SEARCH_CELLS == 3
+    assert math.isclose(c.FACING_TOLERANCE, math.radians(5))
+
+
+def test_the_goals():
+    assert c.GOAL_FEEDBACK_RATE_HZ == 2.0
+    assert (c.DOCK_TARGET_MIN_PERCENT, c.DOCK_TARGET_MAX_PERCENT) == (1.0, 100.0)
+
+
+def test_the_followers_own_numbers_stay_inside_the_specs():
+    # Not rows of the spec's table: how the follower meets the rows that are.
+    # It lets go of the wheel and of the brakes well inside the goal
+    # tolerance, and inside the clearance a planned path keeps.
+    assert c.STOP_WITHIN_M < c.GOAL_TOLERANCE_M / 10
+    assert c.GOAL_TOLERANCE_M < c.HOLD_HEADING_WITHIN_M <= c.PLANNER_CLEARANCE_M
+    assert c.STEERING_GAIN > 0.0
 
 
 def test_the_trail_and_the_rates():

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The simulation core: the world, the drive, the sensors, the battery.
+"""The simulation core: the world, the drive, the sensors, the battery, the
+navigation and the goals.
 
 Nothing in here imports ROS, reads a clock or rolls a die. The node in
 `fleetless_turtle_sim.node` is a thin adapter around it, and plain pytest is
