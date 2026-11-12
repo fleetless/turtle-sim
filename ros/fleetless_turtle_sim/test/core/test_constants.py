@@ -85,7 +85,7 @@ def test_the_followers_own_numbers_stay_inside_the_specs():
 
 
 def test_the_trail_and_the_rates():
-    assert (c.TRAIL_SPACING_M, c.TRAIL_MAX_POINTS) == (0.1, 2000)
+    assert (c.TRAIL_SPACING_M, c.TRAIL_MAX_POINTS, c.TRAIL_RATE_HZ) == (0.1, 2000, 1.0)
     assert (c.ODOMETRY_RATE_HZ, c.STATUS_RATE_HZ, c.BATTERY_RATE_HZ) == (20.0, 10.0, 1.0)
 
 

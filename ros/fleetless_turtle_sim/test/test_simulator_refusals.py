@@ -14,7 +14,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+import rclpy
 from ament_index_python.packages import get_package_prefix
+from fleetless_turtle_msgs.action import DriveTo, DriveToSquare
+from probe import Probe
 
 GARDEN = Path(__file__).resolve().parents[3] / "maps" / "garden.png"
 SIMULATOR = (
@@ -128,3 +131,26 @@ def test_sigterm_ends_it_too():
     said = stopped(process, lines, signal.SIGTERM)
     assert process.returncode == 0, said
     assert "Traceback" not in said, said
+
+
+@pytest.mark.parametrize("how", [signal.SIGINT, signal.SIGTERM])
+def test_a_stop_while_goals_run_and_wait_ends_it_cleanly_too(how):
+    """A goal's callback is a coroutine that waits for its goal to end. A stop
+    comes first here: for one goal that runs and one that was preempted and
+    answered. Nothing waits for them, and nothing complains about them."""
+    process, lines = started(f"map:={GARDEN}")
+    rclpy.init()
+    probe = Probe("stopper")
+    try:
+        first = probe.send(DriveToSquare, "/turtle/drive_to_square", square="H8")
+        second = probe.send(DriveTo, "/turtle/drive_to", x=240, y=240)
+        assert first.result(timeout=10.0)[1].reason == "preempted"
+        time.sleep(2.0)
+        assert not second.ended
+        said = stopped(process, lines, how)
+    finally:
+        probe.close()
+        rclpy.shutdown()
+    assert process.returncode == 0, said
+    assert "Traceback" not in said and "never awaited" not in said, said
+    assert "rror" not in said, said
