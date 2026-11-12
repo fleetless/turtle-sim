@@ -16,5 +16,5 @@ setup(
     zip_safe=True,
     license="Apache-2.0",
     tests_require=["pytest"],
-    entry_points={"console_scripts": ["simulator = fleetless_turtle_sim.node:main"]},
+    entry_points={"console_scripts": ["simulator = fleetless_turtle_sim.start:main"]},
 )

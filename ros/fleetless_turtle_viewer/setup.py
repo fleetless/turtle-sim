@@ -33,5 +33,5 @@ setup(
     zip_safe=True,
     license="Apache-2.0",
     tests_require=["pytest"],
-    entry_points={"console_scripts": ["viewer = fleetless_turtle_viewer.node:main"]},
+    entry_points={"console_scripts": ["viewer = fleetless_turtle_viewer.start:main"]},
 )

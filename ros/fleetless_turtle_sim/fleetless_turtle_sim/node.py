@@ -10,7 +10,6 @@ of them, so a busy machine does not slow the turtle down.
 
 import array
 import math
-import signal
 import threading
 import time
 
@@ -321,9 +320,12 @@ class SimulatorNode(Node):
         )
 
 
-def main(args=None) -> int:
-    # This process takes the signals itself. Left to ROS, a signal closes the
-    # context at once, under a timer that is about to publish into it.
+def run(stop: threading.Event, args=None) -> int:
+    """Run the node until `stop` is set. `start.py` sets it on SIGINT and SIGTERM.
+
+    This process takes the signals itself. Left to ROS, a signal closes the
+    context at once, under a timer that is about to publish into it.
+    """
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     try:
         node = SimulatorNode()
@@ -331,10 +333,12 @@ def main(args=None) -> int:
         rclpy.logging.get_logger(NODE_NAME).fatal(str(refusal))
         rclpy.try_shutdown()
         return 2
-
-    stop = threading.Event()
-    for stopping in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(stopping, lambda *_: stop.set())
+    if stop.is_set():
+        # Asked to stop while it was still starting, by a person or by a
+        # launch whose other node gave up. Nothing is wrong: leave quietly.
+        node.destroy_node()
+        rclpy.try_shutdown()
+        return 0
 
     # Several threads, so that a long callback (an action, later) never
     # holds up the step.

@@ -302,6 +302,8 @@ def build_app(hub: Hub, healthy, web_dir: Path, config: Path) -> web.Application
 
 
 async def serve(node: ViewerNode, hub: Hub, stop: asyncio.Event) -> None:
+    if stop.is_set():
+        return  # asked to stop before there was anything to serve
     web_dir = Path(get_package_share_directory("fleetless_turtle_viewer")) / "web"
     runner = web.AppRunner(
         build_app(hub, node.healthy, web_dir, node.config), access_log=None, shutdown_timeout=2.0
@@ -324,11 +326,12 @@ async def serve(node: ViewerNode, hub: Hub, stop: asyncio.Event) -> None:
         await runner.cleanup()
 
 
-def main(args=None) -> int:
-    # The event loop takes the signals, so ROS must not.
+def run(stop: threading.Event, args=None) -> int:
+    """Run the node until a stop arrives. `start.py` sets `stop` on SIGINT and SIGTERM."""
+    # This process takes the signals itself, so ROS must not.
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     loop = asyncio.new_event_loop()
-    stop = asyncio.Event()
+    stopping = asyncio.Event()
     hub = Hub()
 
     def deliver(kind: str, text: str) -> None:
@@ -341,7 +344,15 @@ def main(args=None) -> int:
     except Refusal as refusal:
         rclpy.logging.get_logger(NODE_NAME).fatal(str(refusal))
         rclpy.try_shutdown()
+        loop.close()
         return 2
+    if stop.is_set():
+        # Asked to stop while it was still starting, by a person or by a
+        # launch whose other node gave up. Nothing is wrong: leave quietly.
+        node.destroy_node()
+        rclpy.try_shutdown()
+        loop.close()
+        return 0
 
     executor = SingleThreadedExecutor()
     executor.add_node(node)
@@ -353,11 +364,15 @@ def main(args=None) -> int:
     spinning = threading.Thread(target=spin, name="ros", daemon=True)
     spinning.start()
 
-    for stopping in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(stopping, stop.set)
+    # From here on a stop wakes the event loop. One that came a moment
+    # earlier has set the flag, which is why the flag is read after.
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stopping.set)
+    if stop.is_set():
+        stopping.set()
     code = 0
     try:
-        loop.run_until_complete(serve(node, hub, stop))
+        loop.run_until_complete(serve(node, hub, stopping))
     except Refusal as refusal:
         node.get_logger().fatal(str(refusal))
         code = 2
