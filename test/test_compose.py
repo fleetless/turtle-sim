@@ -19,11 +19,17 @@ ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker-compose.yaml"
 EXAMPLE = ROOT / ".env.example"
 README = ROOT / "README.md"
-DOCKERFILE = ROOT / "Dockerfile"
 LAUNCH_FILES = sorted((ROOT / "ros").glob("*/launch/*.py"))
 
 # What a user may set is named like this, and nothing else of ours is.
 VARIABLE = r"(?:FLEETLESS|TURTLE)_[A-Z0-9_]+"
+# How Python asks the environment for a variable: by one of these names, or
+# by one of `os.environ`'s own. And what the name's argument is called.
+ASKS = {"getenv", "EnvironmentVariable"}
+ASKS_OF_ENVIRON = {"get", "pop", "setdefault"}
+NAMED = {"name", "key"}
+# What may stand before `NAME=` where a shell file or a Dockerfile sets it.
+SETS = "(?:export|local|readonly|declare|ENV|ARG)"
 # Written with a default, so nobody has to edit the file: ${NAME:-default}.
 WITH_DEFAULT = re.compile(r"\$\{(" + VARIABLE + r"):-([^}]*)\}")
 
@@ -32,48 +38,161 @@ def service() -> dict:
     return yaml.safe_load(COMPOSE.read_text())["services"]["turtle"]
 
 
-def scripts_in_the_image() -> list[Path]:
-    """The files of docker/ that the Dockerfile copies into the image."""
-    copied = re.findall(r"^COPY (.+) \S+$", DOCKERFILE.read_text(), re.MULTILINE)
-    return sorted(
-        {
-            ROOT / source
-            for line in copied
-            for source in line.split()
-            if source.startswith("docker/")
-        }
-    )
+def copied_into_the_image(root: Path) -> set[Path]:
+    """Every file the Dockerfile copies out of the checkout, wherever it lies.
+
+    A directory stands for the files below it. `COPY --from` takes from
+    another stage and not from the checkout.
+    """
+    files = set()
+    for line in re.findall(r"^COPY (.+)$", (root / "Dockerfile").read_text(), re.MULTILINE):
+        words = line.split()
+        if any(word.startswith("--from") for word in words):
+            continue
+        for source in (root / word for word in words[:-1] if not word.startswith("--")):
+            files |= {path for path in source.rglob("*") if path.is_file()} or {source}
+    return files
 
 
-def names_in_python(path: Path) -> set[str]:
-    """Every name a Python file spells out as a text of its own."""
+def is_a_test(path: Path) -> bool:
+    """Below a test directory, or named as pytest names its own files."""
+    return "test" in path.parts or path.name.startswith("test_") or path.name == "conftest.py"
+
+
+def language(path: Path) -> str | None:
+    """`python` or `shell` for a script, by its name or its first line. Else nothing."""
+    if path.suffix in {".py", ".sh", ".bash"}:
+        return "python" if path.suffix == ".py" else "shell"
+    with path.open("rb") as file:
+        first = file.readline()
+    if not first.startswith(b"#!"):
+        return None
+    return "python" if b"python" in first else "shell" if re.search(rb"\b\w*sh\b", first) else None
+
+
+def scripts_of_the_container(root: Path = ROOT) -> dict[Path, str]:
+    """Every script that runs in the container, with its language.
+
+    What the Dockerfile copies into the image, from wherever it comes, and
+    the Python of every package: the nodes as much as the launch file. Not
+    the tests, which run beside the image and not in it.
+    """
+    candidates = copied_into_the_image(root) | set((root / "ros").glob("*/**/*.py"))
     return {
-        node.value
-        for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and re.fullmatch(VARIABLE, node.value)
+        path: language(path)
+        for path in sorted(candidates)
+        if path.is_file() and not is_a_test(path.relative_to(root)) and language(path)
     }
 
 
+def is_the_environment(node: ast.AST) -> bool:
+    """`os.environ`, or `environ` by itself."""
+    if isinstance(node, ast.Attribute):
+        return node.attr == "environ"
+    return isinstance(node, ast.Name) and node.id == "environ"
+
+
+def asked_of_the_environment(tree: ast.AST) -> list[ast.expr]:
+    """What a piece of Python hands to the environment as the name of a variable.
+
+    `os.getenv(name)` and launch's `EnvironmentVariable(name)`, by whatever
+    path they are called; `os.environ.get(name)`, `os.environ[name]` when it
+    is read, and `name in os.environ`.
+    """
+    asked = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            by_name = isinstance(node.func, ast.Name) and node.func.id in ASKS
+            by_path = isinstance(node.func, ast.Attribute) and (
+                node.func.attr in ASKS
+                or (node.func.attr in ASKS_OF_ENVIRON and is_the_environment(node.func.value))
+            )
+            if by_name or by_path:
+                named = [keyword.value for keyword in node.keywords if keyword.arg in NAMED]
+                asked += (node.args or named)[:1]
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            asked += [node.slice] if is_the_environment(node.value) else []
+        elif isinstance(node, ast.Compare) and any(map(is_the_environment, node.comparators)):
+            asked.append(node.left)
+    return asked
+
+
+def handed_to(tree: ast.AST, function: str, argument: str, position: int) -> list[ast.expr]:
+    """What the calls of a function hand it for one argument, by position or by name."""
+    handed = []
+    for call in ast.walk(tree):
+        if isinstance(call, ast.Call) and function in (
+            getattr(call.func, "id", None),
+            getattr(call.func, "attr", None),
+        ):
+            by_name = [keyword.value for keyword in call.keywords if keyword.arg == argument]
+            handed += call.args[position : position + 1] or by_name
+    return handed
+
+
+def names_in_python(path: Path) -> set[str]:
+    """Every variable a Python file reads from the environment.
+
+    By what the code does and not by what it spells: a text that only looks
+    like a variable's name is none. The name may be the text itself, a
+    constant of the module, or what a call hands to a function of this file
+    that asks the environment for its own argument, as the launch file's
+    `from_environment("NAME", default)` does.
+    """
+    tree = ast.parse(path.read_text())
+    constants = {
+        target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    def text(node: ast.expr) -> object:
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        return node.value if isinstance(node, ast.Constant) else None
+
+    names = {text(node) for node in asked_of_the_environment(tree)}
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        arguments = [each.arg for each in function.args.args if each.arg not in ("self", "cls")]
+        for asked in asked_of_the_environment(function):
+            if isinstance(asked, ast.Name) and asked.id in arguments:
+                position = arguments.index(asked.id)
+                names |= {text(node) for node in handed_to(tree, function.name, asked.id, position)}
+    return {name for name in names if isinstance(name, str) and re.fullmatch(VARIABLE, name)}
+
+
 def names_in_shell(path: Path) -> set[str]:
-    """Every name a shell file expands and does not set itself."""
-    text = path.read_text()
-    expanded = set(re.findall(r"\$\{?(" + VARIABLE + r")", text))
-    its_own = set(re.findall(r"^\s*(" + VARIABLE + r")=", text, re.MULTILINE))
-    return expanded - its_own
+    """Every variable a shell file takes from whoever started it.
+
+    That is a name it expands before a line of its own has set it.
+    `NAME=${NAME:-default}` asks first and sets after, so it counts; a name
+    the file sets and only then expands is its own. A comment expands
+    nothing. A Dockerfile reads the same way.
+    """
+    lines = path.read_text().splitlines()
+    text = "\n".join("" if line.lstrip().startswith("#") else line for line in lines)
+    names = set()
+    for expansion in re.finditer(r"\$\{?(" + VARIABLE + r")", text):
+        above = text[: text.rfind("\n", 0, expansion.start()) + 1]
+        if not re.search(rf"^\s*(?:{SETS}\s+)?{expansion[1]}=", above, re.MULTILINE):
+            names.add(expansion[1])
+    return names
 
 
-def read_by_the_container() -> set[str]:
+def read_by_the_container(root: Path = ROOT) -> set[str]:
     """The variables the container reads from whoever starts it.
 
-    From the code, not from a list: the image's own lines, the scripts it
-    starts with and the launch file. FLEETLESS_CLOUD_URL is the bridge's to
-    read; it is here because the entrypoint looks at it first.
+    From the code, not from a list: the Dockerfile's own lines and every
+    script of the container. FLEETLESS_CLOUD_URL is the bridge's to read; it
+    is here because the entrypoint looks at it first.
     """
-    names = names_in_shell(DOCKERFILE)
-    for path in [*scripts_in_the_image(), *LAUNCH_FILES]:
-        names |= names_in_python(path) if path.suffix == ".py" else names_in_shell(path)
+    names = names_in_shell(root / "Dockerfile")
+    for path, written_in in scripts_of_the_container(root).items():
+        names |= names_in_python(path) if written_in == "python" else names_in_shell(path)
     return names
 
 
@@ -104,13 +223,22 @@ def defaults_in_the_compose_file() -> dict[str, str]:
 
 
 def test_the_reading_finds_what_the_container_reads():
-    assert [path.name for path in scripts_in_the_image()] == [
-        "entrypoint.sh",
-        "environment.sh",
-        "launcher.py",
-        "ros2",
-        "start.sh",
-    ]
+    read = {
+        str(path.relative_to(ROOT)): language
+        for path, language in scripts_of_the_container().items()
+    }
+    # The image's scripts, with and without a suffix, the launch file, a node.
+    assert {
+        "docker/entrypoint.sh": "shell",
+        "docker/environment.sh": "shell",
+        "docker/start.sh": "shell",
+        "docker/ros2": "shell",
+        "docker/launcher.py": "python",
+        "ros/fleetless_turtle_bringup/launch/turtle.launch.py": "python",
+        "ros/fleetless_turtle_sim/fleetless_turtle_sim/node.py": "python",
+    }.items() <= read.items()
+    # No test, and nothing that only lies beside the image.
+    assert not [name for name in read if "/test/" in name or name.endswith("-test.sh")]
     assert len(LAUNCH_FILES) == 1
     # The entrypoint's one and the launch file's four.
     assert read_by_the_container() == {
@@ -120,6 +248,143 @@ def test_the_reading_finds_what_the_container_reads():
         "TURTLE_BATTERY_DRAIN",
         "TURTLE_VIEW_PORT",
     }
+
+
+def checkout(root: Path, files: dict[str, str]) -> Path:
+    """A small checkout for one case: the files it names, and nothing else."""
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    return root
+
+
+def test_a_node_is_read_as_the_launch_file_is(tmp_path):
+    root = checkout(
+        tmp_path,
+        {
+            "Dockerfile": "FROM ros:jazzy-ros-base\n",
+            "ros/a_package/a_package/node.py": 'import os\nos.environ.get("TURTLE_IN_A_NODE")\n',
+            "ros/a_package/launch/a.launch.py": 'import os\nos.getenv("TURTLE_IN_A_LAUNCH_FILE")\n',
+            "ros/a_package/test/test_node.py": 'import os\nos.environ["TURTLE_IN_A_TEST"]\n',
+            "ros/a_package/test/conftest.py": 'import os\nos.getenv("TURTLE_IN_A_CONFTEST")\n',
+        },
+    )
+    assert read_by_the_container(root) == {"TURTLE_IN_A_NODE", "TURTLE_IN_A_LAUNCH_FILE"}
+
+
+def test_a_shell_variable_that_is_read_before_it_is_set_is_read(tmp_path):
+    root = checkout(
+        tmp_path,
+        {
+            "Dockerfile": (
+                "COPY docker/entrypoint.sh /opt/turtle/\n"
+                "ENV FLEETLESS_SET_BY_THE_IMAGE=/state\n"
+                'CMD echo "$FLEETLESS_SET_BY_THE_IMAGE ${TURTLE_IN_THE_DOCKERFILE:-1}"\n'
+            ),
+            "docker/entrypoint.sh": (
+                "TURTLE_WITH_A_DEFAULT=${TURTLE_WITH_A_DEFAULT:-8765}\n"
+                "export TURTLE_ITS_OWN=/tmp/own\n"
+                'echo "$TURTLE_WITH_A_DEFAULT $TURTLE_ITS_OWN $TURTLE_JUST_READ"\n'
+                "# A comment may name $TURTLE_IN_A_COMMENT.\n"
+            ),
+        },
+    )
+    assert read_by_the_container(root) == {
+        "TURTLE_WITH_A_DEFAULT",
+        "TURTLE_JUST_READ",
+        "TURTLE_IN_THE_DOCKERFILE",
+    }
+
+
+def test_a_script_is_read_wherever_the_dockerfile_takes_it_from(tmp_path):
+    root = checkout(
+        tmp_path,
+        {
+            "Dockerfile": (
+                "COPY --chmod=755 tools/hook.sh bin/turtle /usr/local/bin/\n"
+                "COPY share /opt/turtle/share\n"
+                "COPY --from=build /opt/turtle/install /opt/turtle/install\n"
+            ),
+            "tools/hook.sh": 'echo "$TURTLE_IN_A_HOOK"\n',
+            "tools/beside.sh": 'echo "$TURTLE_NOT_COPIED"\n',
+            "bin/turtle": (
+                '#!/usr/bin/env python3\nimport os\nos.environ["TURTLE_WITHOUT_A_SUFFIX"]\n'
+            ),
+            "share/deep/down.sh": 'echo "${TURTLE_IN_A_DIRECTORY}"\n',
+            "share/notes.txt": "TURTLE_IN_A_TEXT is $TURTLE_IN_A_TEXT\n",
+        },
+    )
+    assert read_by_the_container(root) == {
+        "TURTLE_IN_A_HOOK",
+        "TURTLE_WITHOUT_A_SUFFIX",
+        "TURTLE_IN_A_DIRECTORY",
+    }
+
+
+def test_python_is_read_by_what_it_asks_the_environment(tmp_path):
+    root = checkout(
+        tmp_path,
+        {
+            "Dockerfile": "FROM ros:jazzy-ros-base\n",
+            "ros/a_package/a_package/node.py": (
+                "import os\n"
+                "from os import environ, getenv\n"
+                "from launch.substitutions import EnvironmentVariable\n"
+                'CONSTANT = "TURTLE_BY_A_CONSTANT"\n'
+                "def from_environment(name, default):\n"
+                "    return EnvironmentVariable(name, default_value=default)\n"
+                "class Node:\n"
+                "    def read(self, default, name):\n"
+                "        return os.environ.get(name, default)\n"
+                "    def all(self):\n"
+                '        self.read("1", "TURTLE_BY_A_METHOD")\n'
+                '        self.read("1", name="TURTLE_BY_A_KEYWORD")\n'
+                'os.environ.get("TURTLE_BY_GET", "1")\n'
+                'os.environ["TURTLE_BY_INDEX"]\n'
+                'os.getenv("TURTLE_BY_GETENV")\n'
+                'getenv(key="TURTLE_BY_KEY")\n'
+                '"TURTLE_BY_IN" in environ\n'
+                'EnvironmentVariable(name="TURTLE_BY_LAUNCH")\n'
+                "os.environ.get(CONSTANT)\n"
+                'from_environment("TURTLE_BY_A_FUNCTION", "1")\n'
+            ),
+        },
+    )
+    assert read_by_the_container(root) == {
+        "TURTLE_BY_GET",
+        "TURTLE_BY_INDEX",
+        "TURTLE_BY_GETENV",
+        "TURTLE_BY_KEY",
+        "TURTLE_BY_IN",
+        "TURTLE_BY_LAUNCH",
+        "TURTLE_BY_A_CONSTANT",
+        "TURTLE_BY_A_FUNCTION",
+        "TURTLE_BY_A_METHOD",
+        "TURTLE_BY_A_KEYWORD",
+    }
+
+
+def test_a_name_that_python_only_spells_is_not_read(tmp_path):
+    """What a node or a launch file may hold without this test minding it."""
+    spelt = (
+        "import os\n"
+        'COLOUR = "TURTLE_GREEN"\n'
+        'SENTENCES = {"TURTLE_MAP": "the map"}\n'
+        'paint("TURTLE_SHELL", colour="TURTLE_GREEN")\n'
+        'frames.get("TURTLE_FRAME")\n'
+        'os.environ["TURTLE_SET_FOR_A_CHILD"] = "1"\n'
+        'os.environ.get("ROS_DOMAIN_ID")\n'
+        "TURTLE_RADIUS_M = 0.1\n"
+    )
+    root = checkout(
+        tmp_path,
+        {
+            "Dockerfile": "FROM ros:jazzy-ros-base\n",
+            "ros/a_package/a_package/node.py": spelt,
+            "ros/a_package/launch/a.launch.py": spelt,
+        },
+    )
+    assert read_by_the_container(root) == set()
 
 
 def test_the_file_is_one_service_and_nothing_else():
