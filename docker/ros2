@@ -11,29 +11,39 @@ source /opt/turtle/environment.sh
 # A question in the turtle's first seconds waits until there is an answer.
 # `ros2 topic list` and its kind ask the daemon that runs beside the nodes
 # (ros2_daemon.py), and a daemon knows what it has heard. Hearing takes DDS a
-# moment: on two cores it is over when the view is up, on one busy core the
-# simulator's announcement is missed and repeated three seconds later. So,
-# while the turtle is young, this waits until the daemon has heard the
-# simulator, by the one thing every turtle has: a publisher of
-# /turtle/status. Later it does not wait at all, and where no turtle runs
-# (`docker run ... ros2 ...`) there is nothing to wait for.
+# moment, and not the same moment for every node: on two cores the daemon
+# may know the simulator and not yet the model's publisher, on one busy core
+# an announcement is missed and repeated three seconds later. So, while the
+# turtle is young, this waits until the daemon has heard every node the
+# launch file starts, each by one thing it has: the simulator publishes
+# /turtle/status and the view listens to it, the cameras publish `top`, the
+# model's publisher the model. Later it does not wait at all, and where no
+# turtle runs (`docker run ... ros2 ...`) there is nothing to wait for.
 YOUNG_FOR_S=30
+PUBLISHED="/turtle/status /turtle/camera/top/image_raw /robot_description"
+LISTENED_TO="/turtle/status"
 started_at=/tmp/turtle-started-at
 if [ -r "$started_at" ]; then
     young_until=$(($(cat "$started_at") + YOUNG_FOR_S))
     daemon="http://127.0.0.1:$((11511 + ${ROS_DOMAIN_ID:-0}))/ros2cli/"
-    question='<?xml version="1.0"?><methodCall><methodName>count_publishers</methodName>'
-    question+='<params><param><value><string>/turtle/status</string></value></param></params>'
-    question+='</methodCall>'
-    heard() {
-        local answer
+    # counts <count_publishers|count_subscribers> <topic>: the daemon knows one at least
+    counts() {
+        local question answer
+        question="<?xml version=\"1.0\"?><methodCall><methodName>$1</methodName>"
+        question+="<params><param><value><string>$2</string></value></param></params>"
+        question+="</methodCall>"
         answer=$(curl -fsS -m 2 -H 'Content-Type: text/xml' -d "$question" "$daemon" 2> /dev/null) \
             && grep -q '<int>[1-9]' <<< "$answer"
     }
-    if ! heard && [ "$(date +%s)" -lt "$young_until" ]; then
+    heard() {
+        local topic
+        for topic in $PUBLISHED; do counts count_publishers "$topic" || return 1; done
+        for topic in $LISTENED_TO; do counts count_subscribers "$topic" || return 1; done
+    }
+    if [ "$(date +%s)" -lt "$young_until" ] && ! heard; then
         while ! heard && [ "$(date +%s)" -lt "$young_until" ]; do sleep 0.2; done
-        # The simulator's other endpoints arrive with the first one, give or
-        # take a few packets.
+        # A node's other endpoints arrive with its first one, give or take
+        # a few packets.
         sleep 0.5
     fi
 fi
