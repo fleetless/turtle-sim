@@ -5,9 +5,11 @@
 launch` would find this file.)
 
 It does what `ros2 launch fleetless_turtle_bringup turtle.launch.py` does,
-through the same API, with one difference: it listens for a stop before it
-imports launch, which takes half a second. The `ros2` command would answer
-a stop in that time with a stack trace, or not at all.
+through the same API, with two differences. It listens for a stop before it
+imports launch, which takes half a second; the `ros2` command would answer
+a stop in that time with a stack trace, or not at all. And it starts the
+ros2 daemon beside the nodes (ros2_daemon.py says why), which belongs to
+this container and not to the launch file.
 
 The entrypoint sends the stop as SIGUSR1. SIGINT stays ignored in this
 process, as it was born (see entrypoint.sh), so that the nodes it starts
@@ -45,7 +47,12 @@ def main() -> int:
     # The slow part.
     from ament_index_python.packages import get_package_share_directory
     from launch import LaunchDescription, LaunchService
-    from launch.actions import IncludeLaunchDescription, OpaqueFunction, SetLaunchConfiguration
+    from launch.actions import (
+        ExecuteProcess,
+        IncludeLaunchDescription,
+        OpaqueFunction,
+        SetLaunchConfiguration,
+    )
     from launch.launch_description_sources import PythonLaunchDescriptionSource
 
     running = True
@@ -53,10 +60,17 @@ def main() -> int:
         get_package_share_directory("fleetless_turtle_bringup"), "launch", "turtle.launch.py"
     )
 
+    daemon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ros2_daemon.py")
+
     def begin(context):
         if stop.is_set():
             return None  # asked to stop before a node was started: start none
-        return [IncludeLaunchDescription(PythonLaunchDescriptionSource(launch_file))]
+        return [
+            # First, so that it hears the nodes arrive. What it prints is a
+            # line per question it is asked; that goes to launch's log file.
+            ExecuteProcess(cmd=[sys.executable, daemon], name="ros2_daemon", output="log"),
+            IncludeLaunchDescription(PythonLaunchDescriptionSource(launch_file)),
+        ]
 
     # Not interactive: on a stop, launch tells its nodes itself and does not
     # count on a terminal having done so.

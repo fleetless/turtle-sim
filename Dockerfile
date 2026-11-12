@@ -72,6 +72,9 @@ COPY maps /opt/turtle/maps
 # The configuration to publish in the console; the view hands it out.
 COPY fleetless /opt/turtle/fleetless
 COPY docker/environment.sh docker/entrypoint.sh docker/start.sh docker/launcher.py /opt/turtle/
+# The ros2 daemon the launcher starts beside the nodes: the first
+# `ros2 topic list` then gets the whole graph, not half of it.
+COPY docker/ros2_daemon.py /opt/turtle/
 # `docker exec -it turtle ros2 topic list` finds this one first.
 COPY docker/ros2 /usr/local/bin/ros2
 
