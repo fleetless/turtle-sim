@@ -49,7 +49,11 @@ _SUPPLY_STATUS = {
 
 
 class Refusal(Exception):
-    """A start the node refuses. The message is one sentence for the user."""
+    """A start the node refuses. The message is one sentence for the user.
+
+    It names the environment variable before the parameter: whoever started
+    the container set the one and has never heard of the other.
+    """
 
 
 def _yaw(angle: float) -> tuple[float, float]:
@@ -122,7 +126,7 @@ class SimulatorNode(Node):
     def _load_world(self) -> World:
         path = self.get_parameter("map").value
         if not path:
-            raise Refusal("The parameter map is not set: it names the map file.")
+            raise Refusal("TURTLE_MAP (the parameter map) is empty: it names the map file.")
         try:
             return World.load(path)
         except MapError as error:
@@ -138,7 +142,8 @@ class SimulatorNode(Node):
                 raise ValueError
         except (TypeError, ValueError):
             raise Refusal(
-                f'battery_drain is "{value}": the battery drain factor is a number of 0 or more.'
+                f'TURTLE_BATTERY_DRAIN (the parameter battery_drain) is "{value}": '
+                "the battery drain factor is a number of 0 or more."
             ) from None
         return drain
 

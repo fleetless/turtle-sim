@@ -144,7 +144,7 @@ said=$(docker run --rm --name "$name" --env TURTLE_VIEW_PORT=abc "$image" 2>&1)
 code=$?
 set -e
 [ "$code" -ne 0 ] || fail "a view port that is no port left the container at exit 0"
-grep -qF 'is "abc": the view listens on a whole number from 1 to 65535.' <<< "$said" \
+grep -qF 'TURTLE_VIEW_PORT (the parameter port) is "abc": the view listens on a whole number from 1 to 65535.' <<< "$said" \
     || fail "the refusal lacks its sentence: $said"
 if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace: $said"; fi
 pass "a view port that is no port ends the container with one sentence, exit $code"

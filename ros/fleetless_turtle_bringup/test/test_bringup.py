@@ -70,7 +70,10 @@ def test_a_view_port_that_is_no_port_ends_everything_with_one_sentence(attempt):
     process = bringup(TURTLE_VIEW_PORT="abc")
     said = ended(process)
     assert_one_sentence_and_no_stack_trace(
-        process, said, 'is "abc": the view listens on a whole number from 1 to 65535.'
+        process,
+        said,
+        'TURTLE_VIEW_PORT (the parameter port) is "abc": '
+        "the view listens on a whole number from 1 to 65535.",
     )
 
 
@@ -93,6 +96,25 @@ def test_a_map_that_does_not_exist_ends_everything_with_one_sentence(attempt):
     process = bringup(TURTLE_MAP="/nowhere/garden.png", TURTLE_VIEW_PORT=str(free_port()))
     said = ended(process)
     assert_one_sentence_and_no_stack_trace(process, said, "Map /nowhere/garden.png does not exist.")
+
+
+@pytest.mark.parametrize(
+    ("variables", "sentence"),
+    [
+        (
+            {"TURTLE_BATTERY_DRAIN": "abc"},
+            'TURTLE_BATTERY_DRAIN (the parameter battery_drain) is "abc": '
+            "the battery drain factor is a number of 0 or more.",
+        ),
+        ({"TURTLE_MAP": ""}, "TURTLE_MAP (the parameter map) is empty: it names the map file."),
+        ({"TURTLE_MAP": "/tmp"}, "Map /tmp is a directory: a map is one PNG file."),
+    ],
+    ids=["a drain factor that is no number", "an empty map", "a directory as the map"],
+)
+def test_a_refusal_names_the_variable_the_user_set(variables, sentence):
+    process = bringup(**{"TURTLE_VIEW_PORT": str(free_port()), **variables})
+    said = ended(process)
+    assert_one_sentence_and_no_stack_trace(process, said, sentence)
 
 
 def test_without_a_token_both_nodes_run_and_an_interrupt_ends_them_cleanly():

@@ -390,7 +390,8 @@ def test_a_port_that_is_no_port_is_refused(value):
     assert refused.returncode == 2, said
     assert "Traceback" not in said, said
     assert len(lines) == 1, said
-    assert 'port is "' in lines[0]
+    # The variable a `docker run` user set comes first, the parameter after.
+    assert 'TURTLE_VIEW_PORT (the parameter port) is "' in lines[0]
     assert lines[0].endswith("the view listens on a whole number from 1 to 65535.")
 
 

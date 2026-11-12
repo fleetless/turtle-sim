@@ -67,6 +67,11 @@ def test_a_missing_file_is_refused(tmp_path):
         World.load(tmp_path / "nowhere.png")
 
 
+def test_a_directory_is_refused_as_what_it_is(tmp_path):
+    with pytest.raises(MapError, match=r"^Map .* is a directory: a map is one PNG file\.$"):
+        World.load(tmp_path)
+
+
 def test_a_file_that_is_no_image_is_refused(tmp_path):
     path = tmp_path / "map.png"
     path.write_text("not a picture")

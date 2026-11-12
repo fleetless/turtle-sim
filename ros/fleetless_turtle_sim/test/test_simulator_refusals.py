@@ -44,7 +44,15 @@ def test_a_map_that_does_not_exist():
 
 
 def test_no_map_at_all():
-    assert refused().endswith("The parameter map is not set: it names the map file.")
+    sentence = "TURTLE_MAP (the parameter map) is empty: it names the map file."
+    assert refused().endswith(sentence)
+    assert refused("map:=''").endswith(sentence)
+
+
+def test_a_directory_as_the_map(tmp_path):
+    assert refused(f"map:={tmp_path}").endswith(
+        f"Map {tmp_path} is a directory: a map is one PNG file."
+    )
 
 
 def test_a_map_of_another_size(tmp_path):
@@ -65,7 +73,8 @@ def test_a_map_with_a_colour_that_is_none_of_the_five(tmp_path):
 @pytest.mark.parametrize("value", ["-1.0", "abc", ".nan", "true", "-0.5"])
 def test_a_battery_drain_that_is_negative_or_no_number(value):
     sentence = refused(f"map:={GARDEN}", f"battery_drain:={value}")
-    assert "battery_drain is " in sentence
+    # The variable a `docker run` user set comes first, the parameter after.
+    assert 'TURTLE_BATTERY_DRAIN (the parameter battery_drain) is "' in sentence
     assert sentence.endswith("the battery drain factor is a number of 0 or more.")
 
 
