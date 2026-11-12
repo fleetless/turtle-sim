@@ -79,7 +79,9 @@ action `fetch_types`) and publish again.
   and it stops, plans again and goes round. `set_trail` with `record: true`
   shows where it has been. `reset` clears up after you.
 
-![The view: the turtle on its way into the house, the path ahead of it with a pin on the target, its trail behind it.](docs/view-goal.png)
+| the view | `top`, at the same moment |
+|---|---|
+| ![The view: the turtle on its way into the house, the path ahead of it with a pin on the target, its trail behind it.](docs/view-goal.png) | ![The top camera at the same moment: the trail behind the turtle, the path from the turtle on, a ring on the target.](docs/camera-top-goal.png) |
 
 - **Ask a model.** Connect an MCP client to Fleetless and ask what the robot
   exposes (`robots.describe`), then to take the turtle to the pond, as close
