@@ -70,6 +70,14 @@ def square_bounds(square: str) -> tuple[int, int, int, int] | None:
     return x_min, y_min, x_min + SQUARE_CELLS - 1, y_min + SQUARE_CELLS - 1
 
 
+def circle_reaches_cell(x: float, y: float, radius: float, cx: int, cy: int) -> bool:
+    """Whether a circle at (x, y) overlaps the cell (cx, cy). Resting against it is not overlap."""
+    # The point of the cell nearest to the circle's centre decides.
+    dx = x - min(max(x, cx * CELL_SIZE_M), (cx + 1) * CELL_SIZE_M)
+    dy = y - min(max(y, cy * CELL_SIZE_M), (cy + 1) * CELL_SIZE_M)
+    return dx * dx + dy * dy < radius * radius - TOUCH_TOLERANCE_M2
+
+
 # --- The world --------------------------------------------------------------
 
 
@@ -125,34 +133,30 @@ class World:
         return not in_grid(cx, cy) or bool(self._blocking[cy, cx])
 
     def is_pad(self, cx: int, cy: int) -> bool:
-        return in_grid(cx, cy) and self.kinds[cy, cx] == PAD
+        return in_grid(cx, cy) and bool(self.kinds[cy, cx] == PAD)
 
     def set_kind(self, cx: int, cy: int, kind: int) -> None:
         self.kinds[cy, cx] = kind
         self._blocking[cy, cx] = kind in BLOCKING
 
-    def restore(self) -> None:
-        """Back to the map as loaded."""
+    def restore(self) -> bool:
+        """Back to the map as loaded. Says whether that changed a cell."""
+        changed = not np.array_equal(self.kinds, self._loaded)
         self.kinds[:] = self._loaded
         self._blocking = np.isin(self.kinds, BLOCKING)
+        return changed
 
     # --- Where a circle fits ------------------------------------------------
 
     def touches(self, x: float, y: float, radius: float) -> bool:
         """Whether a circle at (x, y) touches a blocking cell or leaves the grid."""
-        limit = radius * radius - TOUCH_TOLERANCE_M2
         cx_min, cy_min = cell_of(x - radius, y - radius)
         cx_max, cy_max = cell_of(x + radius, y + radius)
-        for cy in range(cy_min, cy_max + 1):
-            # The point of the cell nearest to the circle's centre decides.
-            dy = y - min(max(y, cy * CELL_SIZE_M), (cy + 1) * CELL_SIZE_M)
-            for cx in range(cx_min, cx_max + 1):
-                if not self.blocks(cx, cy):
-                    continue
-                dx = x - min(max(x, cx * CELL_SIZE_M), (cx + 1) * CELL_SIZE_M)
-                if dx * dx + dy * dy < limit:
-                    return True
-        return False
+        return any(
+            self.blocks(cx, cy) and circle_reaches_cell(x, y, radius, cx, cy)
+            for cy in range(cy_min, cy_max + 1)
+            for cx in range(cx_min, cx_max + 1)
+        )
 
     def fits(self, x: float, y: float) -> bool:
         """Whether the turtle's footprint is a valid pose at (x, y)."""
