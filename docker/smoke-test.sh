@@ -26,11 +26,23 @@ TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/righ
 # `grep -q` ends when grep has seen enough, and under pipefail the writer it
 # cut off fails the line: a check that fails on a full match, or passes on
 # one it should have refused.
-pass() { echo "PASS  $1"; }
+
+# A container that had to end by itself is removed once it has. What it said
+# is in $said, and that is the log to show until its claim has passed.
+ended=
+said=
+pass() {
+    echo "PASS  $1"
+    ended=
+}
 fail() {
     echo "FAIL  $1" >&2
     echo "----- the container's log -----" >&2
-    docker logs "$name" 2>&1 | tail -n 60 >&2 || true
+    if [ -n "$ended" ]; then
+        tail -n 60 <<< "$said" >&2
+    else
+        docker logs "$name" 2>&1 | tail -n 60 >&2 || true
+    fi
     exit 1
 }
 remove() { docker rm --force --volumes "$name" > /dev/null 2>&1 || true; }
@@ -52,6 +64,7 @@ within() {
 to_its_end() {
     local claim=$1 container=$2 limit=$((60 * patience))
     shift 2
+    ended=$container
     docker rm --force --volumes "$container" > /dev/null 2>&1 || true
     docker run --detach --name "$container" "$@" > /dev/null
     if ! code=$(timeout "$limit" docker wait "$container"); then
@@ -212,5 +225,14 @@ to_its_end "a map that does not exist" "$name" --env TURTLE_MAP=/nowhere/garden.
 grep -qF "Map /nowhere/garden.png does not exist." <<< "$said" || fail "the refusal lacks its sentence: $said"
 if grep -qF "Traceback" <<< "$said"; then fail "the refusal shows a stack trace: $said"; fi
 pass "a map that does not exist ends the container with one sentence, exit $code"
+
+# --- The test's own failure report ----------------------------------------------
+# A claim that fails shows what its container said, also when that container
+# had to end by itself and is gone by then.
+to_its_end "the failure report" "$name" "$image" echo "a line of the container's own"
+report=$( (fail "on purpose") 2>&1) || true
+grep -qF "a line of the container's own" <<< "$report" \
+    || fail "a failed claim does not show what its container said, but: $report"
+pass "a failed claim shows what its container said"
 
 echo "smoke-test.sh: $image passed"
