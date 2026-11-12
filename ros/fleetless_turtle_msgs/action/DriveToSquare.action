@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# Drives the turtle into a square: to the traversable cell nearest to the
+# square's centre.
+string square               # "A1" .. "P16"
+---
+bool success
+string reason
+string message
+int32 cell_x                # where it ended
+int32 cell_y
+float32 distance_m          # driven for this goal
+float32 duration_s
+---
+# Feedback, 2 Hz.
+string phase                # planning | driving | replanning
+int32 cell_x
+int32 cell_y
+float32 remaining_m         # along the current path
+float32 progress            # 0..1

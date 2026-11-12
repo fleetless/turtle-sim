@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Puts a rock on a cell, or frees the cell, whatever it was.
+int32 x
+int32 y
+bool occupied
+---
+bool success
+string message
