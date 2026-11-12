@@ -24,7 +24,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
-from sensor_msgs.msg import BatteryState, LaserScan, Range
+from sensor_msgs.msg import BatteryState, JointState, LaserScan, Range
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from .core import constants as c
@@ -115,6 +115,10 @@ class SimulatorNode(Node):
         self.create_timer(1.0 / c.RANGE_RATE_HZ, self._publish_ranges)
         self.create_timer(1.0 / c.BATTERY_RATE_HZ, self._publish_battery)
         self.create_timer(1.0 / c.STATUS_RATE_HZ, self._publish_status)
+
+        # The model's legs and head, which robot_state_publisher turns into transforms.
+        self._joints = self.create_publisher(JointState, "joint_states", 10)
+        self.create_timer(1.0 / c.JOINT_RATE_HZ, self._publish_joints)
 
         x, y = self._sim.status().cell_x, self._sim.status().cell_y
         self.get_logger().info(
@@ -273,6 +277,15 @@ class SimulatorNode(Node):
         message.odometer_m = status.odometer_m
         message.trail = status.trail
         self._status.publish(message)
+
+    def _publish_joints(self) -> None:
+        with self._lock:
+            positions = self._sim.joints()
+        joints = JointState()
+        joints.header.stamp = self.get_clock().now().to_msg()
+        joints.name = list(positions)
+        joints.position = list(positions.values())
+        self._joints.publish(joints)
 
     def _publish_world(self) -> None:
         with self._lock:

@@ -149,4 +149,5 @@ def test_without_a_token_every_node_runs_and_an_interrupt_ends_them_cleanly():
     assert process.returncode == 0, said
     assert "Traceback" not in said and "KeyboardInterrupt" not in said, said
     assert "escalating to" not in said, said
-    assert said.count("process has finished cleanly") == 3, said
+    # The simulator, the cameras, robot_state_publisher and the view.
+    assert said.count("process has finished cleanly") == 4, said

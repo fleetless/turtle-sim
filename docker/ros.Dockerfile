@@ -8,6 +8,7 @@ COPY ros/fleetless_turtle_msgs/package.xml /manifests/fleetless_turtle_msgs/pack
 COPY ros/fleetless_turtle_sim/package.xml /manifests/fleetless_turtle_sim/package.xml
 COPY ros/fleetless_turtle_viewer/package.xml /manifests/fleetless_turtle_viewer/package.xml
 COPY ros/fleetless_turtle_cameras/package.xml /manifests/fleetless_turtle_cameras/package.xml
+COPY ros/fleetless_turtle_description/package.xml /manifests/fleetless_turtle_description/package.xml
 COPY ros/fleetless_turtle_bringup/package.xml /manifests/fleetless_turtle_bringup/package.xml
 # The bridge is no rosdep key: the real image installs it from Fleetless's
 # apt repository, and no test here needs it.

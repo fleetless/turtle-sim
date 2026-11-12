@@ -1,0 +1,141 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The turtle, at real size: a shell, a head that turns and four legs that
+  swing. Plain URDF, no xacro: what stands here is what a loader reads.
+
+  Metres and radians. `base_link` lies on the floor under the turtle's
+  centre, x ahead, y to the left, z up. Nothing reaches past the simulator's
+  footprint, a circle of 0.1 m radius around it.
+
+  The meshes are made by tools/make_meshes.py and coloured here; none has a
+  texture. The simulator publishes the five joints on /joint_states, and
+  robot_state_publisher turns them into transforms.
+-->
+<robot name="turtle">
+
+  <material name="shell"><color rgba="0.184 0.435 0.310 1"/></material>
+  <material name="shell_top"><color rgba="0.247 0.541 0.380 1"/></material>
+  <material name="rim"><color rgba="0.525 0.722 0.420 1"/></material>
+  <material name="skin"><color rgba="0.639 0.788 0.490 1"/></material>
+  <material name="eye"><color rgba="0.110 0.141 0.125 1"/></material>
+
+  <!-- The shell, with its rim and the tail: everything that does not move. -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.018"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/rim.stl"/></geometry>
+      <material name="rim"/>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.020"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/shell.stl"/></geometry>
+      <material name="shell"/>
+    </visual>
+    <!-- The same dome again, small, where the shell is highest: a lighter crown. -->
+    <visual>
+      <origin xyz="0 0 0.047"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/shell.stl" scale="0.5 0.5 0.42"/></geometry>
+      <material name="shell_top"/>
+    </visual>
+    <visual>
+      <origin xyz="-0.086 0 0.016"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/tail.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+    <!-- What the simulator collides with: the footprint, and no mesh. -->
+    <collision>
+      <origin xyz="0 0 0.032"/>
+      <geometry><cylinder radius="0.1" length="0.064"/></geometry>
+    </collision>
+  </link>
+
+  <!-- The head. It turns into a curve, by 30 degrees at most. -->
+  <link name="head">
+    <visual>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/head.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+    <visual>
+      <origin xyz="0.030 0.010 0.009"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/eye.stl"/></geometry>
+      <material name="eye"/>
+    </visual>
+    <visual>
+      <origin xyz="0.030 -0.010 0.009"/>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/eye.stl"/></geometry>
+      <material name="eye"/>
+    </visual>
+  </link>
+  <!-- Nothing drives these joints: effort and velocity are here because a
+       revolute joint must name them. -->
+  <joint name="head_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="head"/>
+    <origin xyz="0.059 0 0.026"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.5236" upper="0.5236" effort="1" velocity="10"/>
+  </joint>
+
+  <!--
+    Four legs, one mesh. A leg lies along its own x, from the hip outwards,
+    and swings about the vertical. Each hip's axis is chosen so that a
+    positive angle swings its leg forwards, on the left side as on the right.
+  -->
+  <link name="leg_front_left">
+    <visual>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/leg.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+  </link>
+  <joint name="leg_front_left_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="leg_front_left"/>
+    <origin xyz="0.044 0.049 0.008" rpy="0 0 0.8727"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="-0.5" upper="0.5" effort="1" velocity="10"/>
+  </joint>
+
+  <link name="leg_front_right">
+    <visual>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/leg.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+  </link>
+  <joint name="leg_front_right_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="leg_front_right"/>
+    <origin xyz="0.044 -0.049 0.008" rpy="0 0 -0.8727"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.5" upper="0.5" effort="1" velocity="10"/>
+  </joint>
+
+  <link name="leg_hind_left">
+    <visual>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/leg.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+  </link>
+  <joint name="leg_hind_left_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="leg_hind_left"/>
+    <origin xyz="-0.044 0.049 0.008" rpy="0 0 2.2689"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="-0.5" upper="0.5" effort="1" velocity="10"/>
+  </joint>
+
+  <link name="leg_hind_right">
+    <visual>
+      <geometry><mesh filename="package://fleetless_turtle_description/meshes/leg.stl"/></geometry>
+      <material name="skin"/>
+    </visual>
+  </link>
+  <joint name="leg_hind_right_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="leg_hind_right"/>
+    <origin xyz="-0.044 -0.049 0.008" rpy="0 0 -2.2689"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.5" upper="0.5" effort="1" velocity="10"/>
+  </joint>
+
+</robot>

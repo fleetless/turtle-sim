@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The one launch file: the simulator, the cameras, the view and, with a token, the bridge.
+"""The one launch file: the turtle's own nodes and, with a token, the Fleetless Bridge.
 
     ros2 launch fleetless_turtle_bringup turtle.launch.py
 
-The bridge is the bridge's own launch file, included unchanged: this is how
-any ROS 2 robot starts it. Everything a user may set comes from the
-environment, because that is what `docker run -e` reaches.
+The turtle's own are the simulator, the cameras, the view and
+robot_state_publisher, which publishes the model. The bridge is the bridge's
+own launch file, included unchanged: this is how any ROS 2 robot starts it.
+Everything a user may set comes from the environment, because that is what
+`docker run -e` reaches.
 
     FLEETLESS_TOKEN       the robot's token; unset or empty, no bridge starts
     FLEETLESS_CLOUD_URL   read by the bridge itself
@@ -35,6 +37,15 @@ def from_environment(name: str, default: str) -> ParameterValue:
     letting launch guess a type first would end it with a stack trace.
     """
     return ParameterValue(EnvironmentVariable(name, default_value=default), value_type=str)
+
+
+def model() -> str:
+    """The turtle's URDF, as the text robot_state_publisher is given."""
+    path = os.path.join(
+        get_package_share_directory("fleetless_turtle_description"), "urdf", "turtle.urdf"
+    )
+    with open(path) as urdf:
+        return urdf.read()
 
 
 def needed(node: Node, what: str) -> RegisterEventHandler:
@@ -70,12 +81,25 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[{"port": from_environment("TURTLE_VIEW_PORT", "8765")}],
     )
     cameras = Node(package="fleetless_turtle_cameras", executable="cameras", output="screen")
+    # ROS's own node for a robot's model. It publishes the URDF on
+    # /robot_description, where the bridge reads it, and turns the simulator's
+    # /joint_states into the transforms of the head and the legs. It lists
+    # every link it read at start; only its warnings are the turtle's news.
+    model_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="screen",
+        parameters=[{"robot_description": ParameterValue(model(), value_type=str)}],
+        ros_arguments=["--log-level", "warn"],
+    )
     parts = [
         simulator,
         cameras,
+        model_publisher,
         viewer,
         needed(simulator, "The simulator"),
         needed(cameras, "The cameras"),
+        needed(model_publisher, "The model's publisher"),
         needed(viewer, "The view"),
     ]
 
