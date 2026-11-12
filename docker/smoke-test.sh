@@ -188,10 +188,17 @@ slow=$(mktemp)
 printf 'set -T\ntrap "sleep 0.05" DEBUG\n' > "$slow"
 chmod 644 "$slow"
 docker create --name "$name" --env BASH_ENV=/tmp/slow.sh "$image" > /dev/null
-docker cp --quiet "$slow" "$name:/tmp/slow.sh"
+# `docker cp` says "Successfully copied" and can be told not to only since
+# Docker 25. So what it says is kept, and shown if it failed.
+copied=$(docker cp "$slow" "$name:/tmp/slow.sh" 2>&1) || {
+    rm -f "$slow"
+    fail "the DEBUG trap did not reach the container: $copied"
+}
 rm -f "$slow"
 docker start "$name" > /dev/null
-sleep 2
+# Long enough for the trap to be set, on a slow machine too. The turtle
+# needs seven times as long to come up under it.
+sleep $((2 * patience))
 asked=$(date +%s%N)
 docker stop "$name" > /dev/null
 took_ms=$((($(date +%s%N) - asked) / 1000000))
