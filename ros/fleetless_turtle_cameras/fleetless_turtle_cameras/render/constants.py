@@ -73,11 +73,13 @@ EYE_NEAR_M = 0.01
 """No face is nearer than this: a distance is divided by."""
 
 WALL_HEIGHT_M = 0.3
-"""A wall is a tall block. As tall as the view draws it."""
+"""A wall is a tall block."""
 
 ROCK_HEIGHT_M = 0.15
 """A rock is a low block: half a wall, and still above the turtle's eye, so
-it hides the floor behind it and a wall behind it rises over it."""
+it hides the floor behind it and a wall behind it rises over it.
+
+The view draws both as tall as this; a test keeps the two in step."""
 
 FOG_POWER = 2.0
 """How haze grows with distance: little nearby, all of it at the range."""

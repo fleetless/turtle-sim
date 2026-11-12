@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from fleetless_turtle_cameras.render import constants as look
 from fleetless_turtle_sim.core import constants as c
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -113,3 +114,16 @@ def test_notice_names_what_is_vendored():
     assert sorted(path.name for path in VENDOR.iterdir()) == sorted(VENDORED)
     for name in VENDORED:
         assert f"ros/fleetless_turtle_viewer/web/vendor/{name}" in notice
+
+
+def test_the_view_draws_a_wall_and_a_rock_as_tall_as_the_eye_camera_does():
+    """One world, one look: a rock is no taller on the page than in the turtle's own picture."""
+    world = WEB / "world.js"
+    assert number(world, "WALL_HEIGHT_M") == look.WALL_HEIGHT_M
+    assert number(world, "ROCK_HEIGHT_M") == look.ROCK_HEIGHT_M
+    # And the README's sentence about heights says both numbers.
+    readme = " ".join((ROOT / "README.md").read_text().split())
+    assert (
+        f"A wall stands {look.WALL_HEIGHT_M} m tall and a rock {look.ROCK_HEIGHT_M} m, "
+        "in `eye` as in the view"
+    ) in readme

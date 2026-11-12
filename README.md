@@ -258,8 +258,8 @@ not this lucky.
 grid the laser reads: no lens, no noise, no light but a sun that never
 moves. `eye` casts one ray per column. It sees across water, which is flat,
 and over a rock to the wall behind it, and that is all the depth there is.
-A wall is 0.3 m tall and a rock 0.15 m for the eye only; to the turtle both
-block alike.
+A wall stands 0.3 m tall and a rock 0.15 m, in `eye` as in the view, and
+only for the looking: to the turtle both block alike.
 
 **The legs are for show.** The turtle is a circle on two wheels. Its legs
 swing with the distance each wheel has rolled, and it would drive as well
