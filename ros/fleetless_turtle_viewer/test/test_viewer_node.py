@@ -19,7 +19,9 @@ import pytest
 import rclpy
 from ament_index_python.packages import get_package_prefix
 from fleetless_turtle_msgs.msg import TurtleStatus, World
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path as PathMsg
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import NodeNameNonExistentError
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -75,6 +77,8 @@ class FakeTurtle:
         self._battery = self.node.create_publisher(BatteryState, "/battery_state", 10)
         self._scan = self.node.create_publisher(LaserScan, "/scan", 10)
         self._world = self.node.create_publisher(World, "/turtle/world", LATCHED)
+        self._plan = self.node.create_publisher(PathMsg, "/turtle/plan", LATCHED)
+        self._trail = self.node.create_publisher(PathMsg, "/turtle/trail", LATCHED)
         self.node.create_timer(1 / 20, self._say_odometry)
         self.node.create_timer(1 / 10, self._say_status)
         self.node.create_timer(1 / 5, self._say_battery_and_scan)
@@ -94,6 +98,12 @@ class FakeTurtle:
         self._executor.shutdown()
         self._thread.join(timeout=5.0)
         self.node.destroy_node()
+
+    def say_plan(self, points):
+        self._plan.publish(path_of(points))
+
+    def say_trail(self, points):
+        self._trail.publish(path_of(points))
 
     def _say_odometry(self):
         if not self.talking:
@@ -130,6 +140,17 @@ class FakeTurtle:
         scan.angle_increment = math.radians(5)
         scan.ranges = [1.25, math.inf, 0.4] + [math.inf] * 69
         self._scan.publish(scan)
+
+
+def path_of(points) -> PathMsg:
+    path = PathMsg()
+    path.header.frame_id = "map"
+    for x, y in points:
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.pose.position.x, pose.pose.position.y = float(x), float(y)
+        path.poses.append(pose)
+    return path
 
 
 def start_viewer(*parameters: str) -> subprocess.Popen:
@@ -352,8 +373,50 @@ def test_scan_frames_carry_null_where_a_ray_hit_nothing(view, turtle):
     assert scan["ranges"][:3] == [1.25, None, 0.4]
 
 
-def test_every_frame_is_of_a_documented_type(view, turtle):
+def test_plan_and_trail_frames_carry_the_points_in_metres(view, turtle):
+    # Before a path was ever published there is no such frame to send.
     assert {frame["type"] for frame in frames(1.0)} == {"world", "state", "scan"}
+
+    def of(kind, length):
+        return lambda frame: frame["type"] == kind and len(frame["points"]) == length
+
+    plan = [(0.85, 0.85), (4.85, 6.95), (10.05, 18.05)]
+    turtle.say_plan(plan)
+    frame = frames(5.0, until=of("plan", 3))[-1]
+    assert frame == {"type": "plan", "points": [[0.85, 0.85], [4.85, 6.95], [10.05, 18.05]]}
+
+    # To the millimetre, oldest first, and a pose that is no place is left out.
+    trail = [(0.85, 0.85), (0.95, 0.85049), (math.nan, 1.0), (1.05, math.inf), (1.0512345, 0.86)]
+    turtle.say_trail(trail)
+    frame = frames(5.0, until=of("trail", 3))[-1]
+    assert frame == {"type": "trail", "points": [[0.85, 0.85], [0.95, 0.85], [1.051, 0.86]]}
+
+
+def test_a_new_page_is_told_the_path_and_the_trail_at_once(view, turtle):
+    # Both are latched and change rarely. A page that had to wait for the
+    # next change would show a driving turtle without its path.
+    heard = frames(1.0)
+    first_state = next(i for i, frame in enumerate(heard) if frame["type"] == "state")
+    told_first = {frame["type"]: frame for frame in heard[: first_state + 4]}
+    assert len(told_first["plan"]["points"]) == 3
+    assert len(told_first["trail"]["points"]) == 3
+    assert [frame["type"] for frame in heard].count("plan") == 1
+
+
+def test_a_goal_that_ends_empties_the_path(view, turtle):
+    turtle.say_plan([])
+    frame = frames(5.0, until=lambda frame: frame["type"] == "plan" and not frame["points"])[-1]
+    assert frame == {"type": "plan", "points": []}
+    turtle.say_trail([])
+    frame = frames(5.0, until=lambda frame: frame["type"] == "trail" and not frame["points"])[-1]
+    assert frame == {"type": "trail", "points": []}
+    # And that is what a new page is told from now on.
+    told = {frame["type"]: frame for frame in frames(1.0)}
+    assert told["plan"]["points"] == [] and told["trail"]["points"] == []
+
+
+def test_every_frame_is_of_a_documented_type(view, turtle):
+    assert {frame["type"] for frame in frames(1.0)} == {"world", "state", "scan", "plan", "trail"}
 
 
 def test_what_a_browser_sends_is_ignored(view, turtle):
@@ -366,7 +429,7 @@ def test_what_a_browser_sends_is_ignored(view, turtle):
     ]
     heard = frames(1.5, say=orders)
     # The frames go on as if nothing had been said, and none answers.
-    assert {frame["type"] for frame in heard} == {"world", "state", "scan"}
+    assert {frame["type"] for frame in heard} == {"world", "state", "scan", "plan", "trail"}
     assert sum(frame["type"] == "state" for frame in heard) >= 15
 
     # And the node has no way to pass an order on: it publishes nothing of its

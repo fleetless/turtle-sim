@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The 3D scene: renderer, camera, light, and the layers that draw the world,
-// the laser and the turtle.
+// the path, the laser and the turtle.
 //
 // Axes. ROS has x east, y north, z up. three.js has y up and a default camera
 // that looks down -z. One group, `ros`, is turned a quarter around x and takes
@@ -13,6 +13,7 @@
 
 import * as THREE from "three";
 
+import { PathLayer } from "./path.js";
 import { ScanLayer } from "./scan.js";
 import { TurtleLayer } from "./turtle.js";
 import { OrbitControls } from "./vendor/OrbitControls.js";
@@ -57,12 +58,13 @@ export class Scene {
     this.scene.add(this.ros);
 
     // The layers, bottom to top. Each owns a group and knows nothing of the
-    // others. A new layer (the path, the target, the trail) is one more
-    // object here and one more set...() method below.
+    // others. A new layer is one more object here and one more set...()
+    // method below.
     this.world = new WorldLayer();
+    this.path = new PathLayer();
     this.scan = new ScanLayer();
     this.turtle = new TurtleLayer();
-    this.ros.add(this.world.group, this.scan.group, this.turtle.group);
+    this.ros.add(this.world.group, this.path.group, this.scan.group, this.turtle.group);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -115,6 +117,16 @@ export class Scene {
   /** @param {object} scan  a `scan` frame */
   setScan(scan) {
     if (this.latest !== null) this.scan.set(scan, this.latest);
+  }
+
+  /** @param {{points: number[][]}} plan  a `plan` frame; no points, no goal */
+  setPlan(plan) {
+    this.path.setPlan(plan.points);
+  }
+
+  /** @param {{points: number[][]}} trail  a `trail` frame */
+  setTrail(trail) {
+    this.path.setTrail(trail.points);
   }
 
   // ---- the camera -----------------------------------------------------------
@@ -227,13 +239,24 @@ export class Scene {
     this.controls.update();
 
     if (this.shown !== null) {
-      const distance = this.camera.position.distanceTo(toThree(this.shown.x, this.shown.y));
-      const viewHeight =
-        2 * distance * Math.tan(THREE.MathUtils.degToRad(FIELD_OF_VIEW_DEG) / 2);
-      this.turtle.updateMarker(viewHeight / this.canvas.clientHeight);
+      this.turtle.updateMarker(this.metresPerPixel(toThree(this.shown.x, this.shown.y)));
     }
+    const target = this.path.target();
+    this.path.update(
+      this.shown,
+      this.metresPerPixel(this.controls.target),
+      target === null ? 0 : this.metresPerPixel(toThree(target[0], target[1])),
+      this.renderer.getPixelRatio(),
+    );
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** How many metres one CSS pixel covers at a point of the scene. */
+  metresPerPixel(point) {
+    const distance = this.camera.position.distanceTo(point);
+    const viewHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(FIELD_OF_VIEW_DEG) / 2);
+    return viewHeight / this.canvas.clientHeight;
   }
 
   // ---- the page around the scene ---------------------------------------------

@@ -5,7 +5,7 @@
 // consumer with a browser attached, and it only shows.
 //
 // Read on in: connection.js (the socket), scene.js (the 3D scene and its
-// layers), panel.js (the numbers).
+// layers: world.js, path.js, scan.js, turtle.js), panel.js (the numbers).
 
 import { connect } from "./connection.js";
 import { Panel } from "./panel.js";
@@ -57,6 +57,12 @@ const handlers = {
   },
   scan(frame) {
     scene?.setScan(frame);
+  },
+  plan(frame) {
+    scene?.setPlan(frame);
+  },
+  trail(frame) {
+    scene?.setTrail(frame);
   },
 };
 
