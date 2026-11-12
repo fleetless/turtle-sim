@@ -3,6 +3,7 @@
 
 import math
 
+import numpy as np
 import pytest
 
 from fleetless_turtle_sim.core import constants as c
@@ -113,6 +114,23 @@ def test_the_heading_is_reported_from_0_to_360(sim):
     run(sim, 1.0, angular=-1.0)
     assert 270.0 < sim.status().heading_deg < 360.0
     assert sim.status().turn_rate == pytest.approx(-1.0)
+
+
+@pytest.mark.parametrize("heading", [-1e-17, -1e-12, -1e-9, -2.6e-7, -1e-6, -1e-4, 0.0, 1e-9])
+def test_a_hair_below_a_full_turn_the_heading_stays_below_360(sim, heading):
+    # The message carries a float32, and from 359.99998 on the nearest one is 360.0.
+    sim.drive.heading = heading
+    reported = sim.status().heading_deg
+    assert 0.0 <= reported < 360.0
+    assert 0.0 <= float(np.float32(reported)) < 360.0
+    # East, give or take the hair: never a jump elsewhere.
+    assert min(reported, 360.0 - reported) < 0.01
+
+
+def test_every_heading_is_reported_inside_one_turn_as_a_float32(sim):
+    for step in range(-7200, 7201):
+        sim.drive.heading = math.radians(step / 10.0)
+        assert 0.0 <= float(np.float32(sim.status().heading_deg)) < 360.0
 
 
 # --- The mode ---------------------------------------------------------------

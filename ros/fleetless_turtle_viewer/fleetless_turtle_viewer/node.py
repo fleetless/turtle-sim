@@ -68,6 +68,12 @@ def _number(value: float, digits: int) -> float | None:
     return round(value, digits) if math.isfinite(value) else None
 
 
+def _heading_deg(heading: float) -> float | None:
+    """A heading in degrees with two decimals, in [0, 360). 359.996 is east, not 360.00."""
+    degrees = _number(math.degrees(heading) % 360.0, 2)
+    return 0.0 if degrees is not None and degrees >= 360.0 else degrees
+
+
 def _frame(**fields) -> str:
     return json.dumps(fields, separators=(",", ":"), allow_nan=False)
 
@@ -155,7 +161,7 @@ class ViewerNode(Node):
                 type="state",
                 x=_number(pose.position.x, 4),
                 y=_number(pose.position.y, 4),
-                heading_deg=_number(math.degrees(heading) % 360.0, 2),
+                heading_deg=_heading_deg(heading),
                 cell_x=status.cell_x,
                 cell_y=status.cell_y,
                 square=status.square,

@@ -9,6 +9,8 @@ steps taken, so a test runs an hour in a second and twice the same way.
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from . import sensors
 from .battery import FULL, Battery
 from .constants import (
@@ -36,6 +38,17 @@ _KIND_NAMES = {
     WATER: "water",
     PAD: "the charging pad",
 }
+
+
+def _heading_deg(heading: float) -> float:
+    """A heading in degrees, in [0, 360), and still there as a float32.
+
+    The status message carries a float32. A hair below a full turn, the
+    nearest float32 is 360.0 itself, which the message says it never holds.
+    A hair below a full turn is east.
+    """
+    degrees = math.degrees(heading) % 360.0
+    return 0.0 if float(np.float32(degrees)) >= 360.0 else degrees
 
 
 @dataclass(frozen=True)
@@ -185,7 +198,7 @@ class Simulation:
             cell_x=cell_x,
             cell_y=cell_y,
             square=square_of(cell_x, cell_y),
-            heading_deg=math.degrees(self.drive.heading) % 360.0,
+            heading_deg=_heading_deg(self.drive.heading),
             speed=self.drive.linear,
             turn_rate=self.drive.angular,
             mode=self.mode,
