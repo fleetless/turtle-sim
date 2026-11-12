@@ -264,9 +264,9 @@ class SimulatorNode(Node):
         return self._answered(response)
 
     def _answered(self, response):
-        """What a service changed is out before its answer is: a goal ended, a cell, the path."""
+        """What a service changed is out before its answer is: a goal ended, a cell, a path."""
         self._settle()
-        self._publish_what_changed()
+        self._publish_what_changed(by_a_service=True)
         return response
 
     # --- Actions --------------------------------------------------------------
@@ -442,8 +442,13 @@ class SimulatorNode(Node):
         joints.position = list(positions.values())
         self._joints.publish(joints)
 
-    def _publish_what_changed(self) -> None:
-        """The latched topics: the world and the path on change, the trail at most once a second."""
+    def _publish_what_changed(self, by_a_service: bool = False) -> None:
+        """The latched topics: the world and the path on change, the trail as it grows.
+
+        The trail grows a point every tenth of a metre and is published at
+        most once a second. What a service did to it does not wait for that
+        second: a trail that was emptied or switched on is out at once.
+        """
         with self._lock:
             world = self._sim.world_version != self._published_world_version
             plan = self._sim.plan_version != self._published_plan_version
@@ -455,7 +460,8 @@ class SimulatorNode(Node):
                 points = self._sim.plan
                 self._published_plan_version = self._sim.plan_version
             self._plan.publish(self._path(points))
-        if trail and time.monotonic() - self._trail_published_at >= 1.0 / c.TRAIL_RATE_HZ:
+        due = time.monotonic() - self._trail_published_at >= 1.0 / c.TRAIL_RATE_HZ
+        if trail and (by_a_service or due):
             with self._lock:
                 points = tuple(self._sim.trail)
                 self._published_trail_version = self._sim.trail_version

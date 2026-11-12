@@ -281,6 +281,47 @@ class TestServicesAndActions(unittest.TestCase):
         Probe.newest(self.trail, lambda t: len(t.poses) == 0, 5.0, "/turtle/trail")
         self.assertFalse(self.until_status(lambda s: not s.trail).trail)
 
+    def test_13b_what_a_service_does_to_the_trail_is_published_before_it_answers(self):
+        """The trail grows at most once a second. A service does not wait for
+        that second: a trail it emptied or switched on is out before its
+        answer is, as everything else a service changed."""
+        forward = Twist()
+        forward.linear.x = 0.4
+
+        def with_a_trail_just_published():
+            """Driving with the trail on, a message of it a moment old: the next is a second off."""
+            self.teleport(LANE_START)
+            self.assertTrue(self.probe.call(SetBool, "/turtle/set_trail", data=True).success)
+            for _ in range(2):  # the second of them is growth for certain
+                heard = len(self.trail)
+                deadline = time.monotonic() + 10.0
+                while len(self.trail) == heard and time.monotonic() < deadline:
+                    self.cmd_vel.publish(forward)
+                    time.sleep(0.05)
+                self.assertGreater(len(self.trail), heard)
+            self.assertGreater(len(self.trail[-1][1].poses), 2)
+
+        def told_before_the_answer(call, poses: int):
+            """Call a service: the trail it leaves is stamped before its answer, and is here."""
+            response = call()
+            answered, answered_at = time.time(), time.monotonic()
+            self.assertTrue(response.success)
+            trail = Probe.newest(self.trail, lambda t: len(t.poses) == poses, 5.0, "/turtle/trail")
+            self.assertLess(stamp(trail), answered)
+            self.assertLess(self.trail[-1][0] - answered_at, 0.5)
+
+        with_a_trail_just_published()
+        told_before_the_answer(
+            lambda: self.probe.call(SetBool, "/turtle/set_trail", data=False), poses=0
+        )
+        # Switched on again at once: the trail is one point, where the turtle is.
+        told_before_the_answer(
+            lambda: self.probe.call(SetBool, "/turtle/set_trail", data=True), poses=1
+        )
+
+        with_a_trail_just_published()
+        told_before_the_answer(lambda: self.probe.call(Trigger, "/turtle/reset"), poses=0)
+
     # --- Actions --------------------------------------------------------------
 
     def test_20_a_drive_to_a_cell_is_reached_with_feedback_and_a_path(self):

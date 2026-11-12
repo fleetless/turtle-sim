@@ -177,7 +177,8 @@ TRAIL_MAX_POINTS = 2000
 """A point every 0.1 m, the newest 2000."""
 
 TRAIL_RATE_HZ = 1.0
-"""The trail is published when it changed, and no more often than this."""
+"""The trail is published as it grows, and no more often than this. What a
+service did to it, emptying it or switching it on, is published at once."""
 
 DISTANCE_TOLERANCE_M = 1e-9
 """Slack on a distance: ten steps of 0.01 m are 0.1 m, whatever their sum rounds to."""
