@@ -40,12 +40,10 @@ it into the robot's configuration in the console and publish it.
 
 Publishing lists one `unknown_type` warning per entry, for standard ROS types
 as much as for the turtle's own: the cloud has not looked at this robot's
-message types yet
-([fleetless/fleetless#898](https://github.com/fleetless/fleetless/issues/898)).
-They are warnings. The file publishes, the bridge applies it, the values
-flow. To be rid of them, have the cloud fetch the types once while the
-turtle is connected (over MCP: `console_introspection_write`, action
-`fetch_types`) and publish again.
+message types yet. They are warnings. The file publishes, the bridge applies
+it, the values flow. To be rid of them, have the cloud fetch the types once
+while the turtle is connected (over MCP: `console_introspection_write`,
+action `fetch_types`) and publish again.
 
 ## 🕹️ What to try
 
