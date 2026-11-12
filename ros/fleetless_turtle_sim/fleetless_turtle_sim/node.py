@@ -326,6 +326,8 @@ def run(stop: threading.Event, args=None) -> int:
     This process takes the signals itself. Left to ROS, a signal closes the
     context at once, under a timer that is about to publish into it.
     """
+    if stop.is_set():
+        return 0  # asked to stop during the imports: there is nothing to undo
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     try:
         node = SimulatorNode()

@@ -328,6 +328,8 @@ async def serve(node: ViewerNode, hub: Hub, stop: asyncio.Event) -> None:
 
 def run(stop: threading.Event, args=None) -> int:
     """Run the node until a stop arrives. `start.py` sets `stop` on SIGINT and SIGTERM."""
+    if stop.is_set():
+        return 0  # asked to stop during the imports: there is nothing to undo
     # This process takes the signals itself, so ROS must not.
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     loop = asyncio.new_event_loop()
