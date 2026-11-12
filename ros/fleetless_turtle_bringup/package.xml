@@ -6,7 +6,7 @@
   <!-- The image carries the version (org.opencontainers.image.version).
        These packages are not released on their own. -->
   <version>0.0.0</version>
-  <description>The one launch file: simulator, cameras, view and, with a token, the Fleetless Bridge.</description>
+  <description>The one launch file: the turtle's own nodes and, with a token, the Fleetless Bridge.</description>
   <maintainer email="hello@fleetless.dev">Dehne Robotik GmbH</maintainer>
   <license>Apache-2.0</license>
   <url type="repository">https://github.com/fleetless/turtle-sim</url>
@@ -17,12 +17,19 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>fleetless_turtle_sim</exec_depend>
   <exec_depend>fleetless_turtle_cameras</exec_depend>
+  <exec_depend>fleetless_turtle_description</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>fleetless_turtle_viewer</exec_depend>
   <!-- Included when FLEETLESS_TOKEN is set. It comes from Fleetless's apt
        repository, not from rosdep; the Dockerfile installs it. -->
   <exec_depend>fleetless_bridge</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>std_msgs</test_depend>
+  <test_depend>tf2_msgs</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

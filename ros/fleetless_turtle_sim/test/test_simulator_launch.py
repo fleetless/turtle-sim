@@ -22,7 +22,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from probe import Probe
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import BatteryState, LaserScan, Range
+from sensor_msgs.msg import BatteryState, JointState, LaserScan, Range
 from tf2_msgs.msg import TFMessage
 
 GARDEN = Path(__file__).resolve().parents[3] / "maps" / "garden.png"
@@ -41,6 +41,7 @@ PUBLISHED = {
     "/range/left": (Range, 10.0),
     "/range/right": (Range, 10.0),
     "/battery_state": (BatteryState, 1.0),
+    "/joint_states": (JointState, 20.0),
     "/turtle/status": (TurtleStatus, 10.0),
     "/turtle/world": (World, None),
     "/map": (OccupancyGrid, None),

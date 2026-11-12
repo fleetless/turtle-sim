@@ -152,8 +152,20 @@ TRAIL_MAX_POINTS = 2000
 DISTANCE_TOLERANCE_M = 1e-9
 """Slack on a distance: ten steps of 0.01 m are 0.1 m, whatever their sum rounds to."""
 
+# --- The model's joints -----------------------------------------------------
+
+LEG_STRIDE_M = 0.25
+"""A leg swings forwards and back once while its side's wheel rolls this far."""
+
+LEG_SWING = 0.45
+"""Radians a leg swings either way from where it rests."""
+
+HEAD_TURN_LIMIT = math.radians(30.0)
+"""The head turns into a curve, by this much at the angular speed limit."""
+
 # --- What the node publishes, and how often ---------------------------------
 
 ODOMETRY_RATE_HZ = 20.0
 STATUS_RATE_HZ = 10.0
 BATTERY_RATE_HZ = 1.0
+JOINT_RATE_HZ = 20.0

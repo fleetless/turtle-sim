@@ -21,7 +21,8 @@ patience=${SMOKE_PATIENCE:-1}
 NO_TOKEN="FLEETLESS_TOKEN is not set: simulator and view are running, no bridge was started."
 TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/right
         /battery_state /turtle/status /turtle/world /map
-        /turtle/camera/top/image_raw /turtle/camera/eye/image_raw"
+        /turtle/camera/top/image_raw /turtle/camera/eye/image_raw
+        /joint_states /robot_description"
 
 # What is searched is fetched whole first and searched after. A pipe into
 # `grep -q` ends when grep has seen enough, and under pipefail the writer it
@@ -169,6 +170,53 @@ for camera in "top 480x480 691200" "eye 320x240 230400"; do
 done
 read -r _ shm_mb <<< "$(grep "^shm " <<< "$pictures")"
 pass "both on Docker's default /dev/shm: $shm_mb MB of 64 in use"
+
+# --- The model -----------------------------------------------------------------
+# What the bridge does with it: it reads the URDF from /robot_description and
+# looks every mesh the file names up in ROS's index of packages.
+model=$(docker exec -i "$name" /opt/turtle/entrypoint.sh python3 - << 'PYTHON'
+import os
+import time
+import xml.etree.ElementTree as ET
+
+import rclpy
+from ament_index_python.packages import get_package_share_directory
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import JointState
+from std_msgs.msg import String
+
+rclpy.init()
+node = rclpy.create_node("smoke_test")
+latched = QoSProfile(
+    depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE
+)
+urdf, joints = [], []
+node.create_subscription(String, "/robot_description", urdf.append, latched)
+node.create_subscription(JointState, "/joint_states", joints.append, 10)
+deadline = time.monotonic() + 30.0
+while not (urdf and joints) and time.monotonic() < deadline:
+    rclpy.spin_once(node, timeout_sec=0.1)
+
+meshes = [mesh.get("filename") for mesh in ET.fromstring(urdf[0].data).iter("mesh")] if urdf else []
+missing = []
+for reference in meshes:
+    package, _, path = reference.removeprefix("package://").partition("/")
+    try:
+        found = os.path.isfile(os.path.join(get_package_share_directory(package), path))
+    except LookupError:
+        found = False
+    if not reference.startswith("package://") or not found:
+        missing.append(reference)
+print("meshes", len(meshes), len(missing), *missing)
+print("joints", *(joints[0].name if joints else []))
+PYTHON
+) || fail "the subscriber inside the container did not run: $model"
+grep -qx "meshes 11 0" <<< "$model" \
+    || fail "/robot_description does not name 11 meshes that are all in the image: $model"
+pass "/robot_description names 11 meshes, and each is in the image"
+grep -qx "joints head_joint leg_front_left_joint leg_front_right_joint leg_hind_left_joint leg_hind_right_joint" <<< "$model" \
+    || fail "/joint_states does not carry the model's five joints: $model"
+pass "/joint_states carries the model's five joints"
 
 # --- A second turtle on the same port -----------------------------------------
 # It shares the first one's network, so its view finds the port taken. The

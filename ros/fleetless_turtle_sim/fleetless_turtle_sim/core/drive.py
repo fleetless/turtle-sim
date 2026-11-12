@@ -19,6 +19,7 @@ from .constants import (
     LINEAR_ACCELERATION_LIMIT,
     LINEAR_SPEED_LIMIT,
     TIME_TOLERANCE_S,
+    TRACK_WIDTH_M,
 )
 from .world import World
 
@@ -51,6 +52,9 @@ class Drive:
         """How often the bumper went from false to true."""
         self.odometer = 0.0
         """Metres driven, forwards and backwards alike."""
+        self.left_wheel = 0.0
+        self.right_wheel = 0.0
+        """Metres each side's wheel has rolled, backwards counted down. The legs follow them."""
         self.non_finite_commands = 0
         """Commands that carried a NaN or an infinity, which counted as 0."""
         self._command = (0.0, 0.0)
@@ -109,6 +113,13 @@ class Drive:
             else:
                 self.linear = 0.0
                 self._since_refusal = 0.0
+
+        # The two wheels of a differential drive: turning rolls them apart. A
+        # refused move has set the linear speed to zero, so a turtle that
+        # pushes against a wall does not walk on the spot.
+        apart = self.angular * TRACK_WIDTH_M / 2.0
+        self.left_wheel += (self.linear - apart) * dt
+        self.right_wheel += (self.linear + apart) * dt
 
         bumper = self._since_refusal < BUMPER_HOLD_S - TIME_TOLERANCE_S
         if bumper and not self.bumper:

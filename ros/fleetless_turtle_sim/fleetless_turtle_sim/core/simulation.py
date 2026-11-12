@@ -29,6 +29,7 @@ from .constants import (
     WATER,
 )
 from .drive import Drive
+from .joints import positions as joint_positions
 from .world import World, cell_centre, cell_of, circle_reaches_cell, in_grid, square_of
 
 _KIND_NAMES = {
@@ -217,6 +218,11 @@ class Simulation:
     def ranges(self) -> dict[str, float]:
         """The range sensors' readings, by name."""
         return sensors.ranges(self.world, self.drive.x, self.drive.y, self.drive.heading)
+
+    def joints(self) -> dict[str, float]:
+        """The model's joint angles in radians, by name: the legs and the head."""
+        drive = self.drive
+        return joint_positions(drive.left_wheel, drive.right_wheel, drive.angular)
 
     # --- The trail ----------------------------------------------------------
 

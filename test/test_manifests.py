@@ -80,6 +80,7 @@ def test_every_package_is_read():
     assert [package.name for package in PACKAGES] == [
         "fleetless_turtle_bringup",
         "fleetless_turtle_cameras",
+        "fleetless_turtle_description",
         "fleetless_turtle_msgs",
         "fleetless_turtle_sim",
         "fleetless_turtle_viewer",
