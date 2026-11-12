@@ -262,6 +262,18 @@ class TestSimulatorNode(unittest.TestCase):
         for _ in range(20):
             publisher.publish(broken)
             time.sleep(0.05)
-        proc_output.assertWaitFor("held a value that is not a number", timeout=5.0)
+        warning = "held a value that is not a number"
+        proc_output.assertWaitFor(warning, timeout=5.0)
         self.assertEqual(self.latest_odometry().pose.pose.position.x, before)
         self.assertEqual(self.latest_status().mode, "idle")
+
+        # Once: twenty more of them, of both kinds, add no second line.
+        broken.linear.x = 0.0
+        broken.angular.z = math.inf
+        for _ in range(20):
+            publisher.publish(broken)
+            time.sleep(0.05)
+        time.sleep(0.5)
+        said = "".join(output.text.decode() for output in proc_output)
+        self.assertEqual(said.count(warning), 1, said)
+        self.assertEqual(self.latest_odometry().pose.pose.position.x, before)
