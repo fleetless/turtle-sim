@@ -95,8 +95,8 @@ LABEL org.opencontainers.image.title="turtle-sim" \
       dev.fleetless.bridge.version="${BRIDGE_VERSION}"
 
 # `docker stop` sends this, the same signal as Ctrl-C. The entrypoint hears
-# it, and SIGTERM as well, from its first lines on, and stops the nodes one
-# by one.
+# it, and SIGTERM as well, from its first lines on, and has launch stop its
+# nodes.
 STOPSIGNAL SIGINT
 
 ENTRYPOINT ["/opt/turtle/entrypoint.sh"]
