@@ -9,7 +9,8 @@ the daemon running from the start, and whoever asks first
 
     docker exec -it turtle ros2 topic list
 
-gets all of it.
+gets all of it. In the turtle's first seconds the daemon is still hearing the
+nodes arrive; the `ros2` wrapper waits those out.
 
 It is ros2cli's own daemon, served by ros2cli's own function. It is started
 here and not by `ros2 daemon start` for one reason: that one leaves after

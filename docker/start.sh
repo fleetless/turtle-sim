@@ -51,4 +51,7 @@ source /opt/turtle/environment.sh
 if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
+# When this turtle started, for the `ros2` wrapper: a question in its first
+# seconds waits until the daemon has heard the nodes.
+date +%s > /tmp/turtle-started-at
 exec python3 /opt/turtle/launcher.py

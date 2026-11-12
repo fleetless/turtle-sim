@@ -96,7 +96,8 @@ pass "/healthz answers 200"
 # Now, the moment the turtle is up, and each question once: the first answer
 # is the one that counts. `ros2` asks a daemon, and a daemon that only starts
 # with the first question has heard half the graph when it answers. This
-# one has listened since the turtle started (docker/ros2_daemon.py).
+# one has listened since the turtle started (docker/ros2_daemon.py), and a
+# question that comes before it has heard the simulator waits (docker/ros2).
 #   names_all <what was listed> <the names it has to hold>
 names_all() {
     local listed=$1 name
