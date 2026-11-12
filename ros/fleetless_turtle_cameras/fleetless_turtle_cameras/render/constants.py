@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every number and every colour of the two cameras, named, and nowhere else.
 
+Sizes, rates, bounds, the proportions things are drawn in and the shapes
+of what is drawn. What the renderers still write themselves is arithmetic:
+a half, a count of colour channels, the sixteenths of a pixel OpenCV counts
+in. A test reads them for any other number. The node beside them has the
+depths of its queues, which are ROS's matter.
+
 What the world is made of (the grid, the cell, the turtle's size) is the
 simulator's to say and stays in `fleetless_turtle_sim.core.constants`. The
 shipped fleetless.yaml repeats the pictures' sizes and their rate; a test
@@ -49,11 +55,53 @@ TOP_LINE_OPACITY = 0.55
 TOP_NAME_SCALE = 0.36
 """Size of a square's name, in OpenCV's font scale: letters 8 px high."""
 
+TOP_NAME_STROKE_PX = 1
+"""How wide a letter's strokes are drawn."""
+
+TOP_NAME_INSET_PX = (4, 13)
+"""Where a name stands in its square: its lower left corner this many
+pixels to the east of the square's north-west corner and to the south of
+it."""
+
+TOP_PAD_MARK = ((0.58, 0.06), (0.24, 0.56), (0.47, 0.56), (0.40, 0.94), (0.76, 0.42), (0.52, 0.42))
+"""A lightning bolt, the usual sign for "charge here": the view's, as the
+corners of its outline in a square from (0, 0) top left to (1, 1)."""
+
+TOP_PAD_MARK_SIZE = 0.62
+"""That square's side, as a part of the pad's narrower one."""
+
 TOP_MARKER_RADIUS_M = 0.2
 """The ring around the turtle, so it is found at four pixels a cell."""
 
+TOP_MARKER_RING_PX = 1
+"""How wide that ring is drawn."""
+
+TOP_ARROW_TIP = 1.75
+TOP_ARROW_BASE = 1.12
+TOP_ARROW_HALF_WIDTH = 0.42
+"""The arrowhead ahead of the ring, in the ring's radii: how far from the
+turtle its tip lies and its base, and how far the base reaches to either
+side. The view's."""
+
+TOP_HEAD_PAST_THE_RIM_M = 0.012
+TOP_HEAD_RADIUS_M = 0.036
+"""The turtle's head, a circle: how far past the shell's rim its middle
+lies, and how large it is. The view's."""
+
+TOP_SHELL = 0.9
+TOP_SHELL_TOP = 0.5
+"""The shell inside its rim and the lighter top of it, as parts of the
+turtle's radius. The view's."""
+
+TOP_TRAIL_PX = 1
+TOP_PLAN_PX = 2
+"""How wide the trail is drawn, and the path with the ring on its target."""
+
 TOP_TARGET_RADIUS_M = 0.15
 """The ring around the target."""
+
+TOP_TARGET_DOT_M = 0.03
+"""The dot on the target itself."""
 
 # --- `eye`: the turtle's own view --------------------------------------------
 
