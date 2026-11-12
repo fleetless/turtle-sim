@@ -425,6 +425,13 @@ def test_every_variable_stands_in_the_compose_file_with_its_default():
     assert len(others) == len(defaults) - 2
 
 
+def test_the_header_says_where_the_view_is_as_the_variable_has_it():
+    header = COMPOSE.read_text().split("services:")[0]
+    port = defaults_in_the_compose_file()["TURTLE_VIEW_PORT"]
+    # The default's address, and the variable that moves it.
+    assert f"http://localhost:{port}," in header and "TURTLE_VIEW_PORT" in header
+
+
 def test_every_variable_has_its_one_line_comment():
     lines = COMPOSE.read_text().splitlines()
     for name in read_by_the_container():

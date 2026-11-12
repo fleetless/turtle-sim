@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The turtle by `docker compose up`: the same container as the one
-# `docker run` line in the README. The view is at http://localhost:8765.
+# `docker run` line in the README. The view is at http://localhost:8765,
+# or on the port that TURTLE_VIEW_PORT names.
 #
 # Every variable the container reads stands below, with its default. Set one
 # in the shell or in a file named `.env` beside this one, for which
