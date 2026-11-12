@@ -6,7 +6,7 @@
   <!-- The image carries the version (org.opencontainers.image.version).
        These packages are not released on their own. -->
   <version>0.0.0</version>
-  <description>The one launch file: simulator, view and, with a token, the Fleetless Bridge.</description>
+  <description>The one launch file: simulator, cameras, view and, with a token, the Fleetless Bridge.</description>
   <maintainer email="hello@fleetless.dev">Dehne Robotik GmbH</maintainer>
   <license>Apache-2.0</license>
   <url type="repository">https://github.com/fleetless/turtle-sim</url>
@@ -16,6 +16,7 @@
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>fleetless_turtle_sim</exec_depend>
+  <exec_depend>fleetless_turtle_cameras</exec_depend>
   <exec_depend>fleetless_turtle_viewer</exec_depend>
   <!-- Included when FLEETLESS_TOKEN is set. It comes from Fleetless's apt
        repository, not from rosdep; the Dockerfile installs it. -->

@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The whole bringup, as `ros2 launch` starts it: both nodes side by side.
+"""The whole bringup, as `ros2 launch` starts it: the nodes side by side.
 
-Each node's own tests start that node alone. What only shows with both: one
-node that ends takes the other with it, and launch does that with an
-interrupt, at whatever moment the other has reached. However it goes, the
-user reads one sentence about what was wrong, and never a stack trace.
+Each node's own tests start that node alone. What only shows with all of
+them: one node that ends takes the others with it, and launch does that
+with an interrupt, at whatever moment each of them has reached. However it
+goes, the user reads one sentence about what was wrong, and never a stack
+trace.
 """
 
 import os
@@ -117,7 +118,7 @@ def test_a_refusal_names_the_variable_the_user_set(variables, sentence):
     assert_one_sentence_and_no_stack_trace(process, said, sentence)
 
 
-def test_without_a_token_both_nodes_run_and_an_interrupt_ends_them_cleanly():
+def test_without_a_token_every_node_runs_and_an_interrupt_ends_them_cleanly():
     port = free_port()
     process = bringup(TURTLE_VIEW_PORT=str(port))
     lines = []
@@ -127,6 +128,7 @@ def test_without_a_token_both_nodes_run_and_an_interrupt_ends_them_cleanly():
         NO_TOKEN,
         f"The view listens on port {port}.",
         "The turtle is on the pad, cell (8, 8)",
+        "The cameras draw top (480 x 480) and eye (320 x 240)",
     ]
     try:
         deadline = time.monotonic() + 60.0
@@ -147,4 +149,4 @@ def test_without_a_token_both_nodes_run_and_an_interrupt_ends_them_cleanly():
     assert process.returncode == 0, said
     assert "Traceback" not in said and "KeyboardInterrupt" not in said, said
     assert "escalating to" not in said, said
-    assert said.count("process has finished cleanly") == 2, said
+    assert said.count("process has finished cleanly") == 3, said

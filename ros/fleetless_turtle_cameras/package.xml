@@ -16,8 +16,18 @@
   <exec_depend>python3-opencv</exec_depend>
   <!-- What the world is made of: the simulator's constants, which import no ROS. -->
   <exec_depend>fleetless_turtle_sim</exec_depend>
+  <!-- The node around them. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>fleetless_turtle_msgs</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>ament_index_python</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>launch</test_depend>
+  <test_depend>launch_ros</test_depend>
+  <test_depend>launch_testing</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
