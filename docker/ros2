@@ -7,4 +7,35 @@
 trap 'exit 130' INT TERM
 # shellcheck source=/dev/null
 source /opt/turtle/environment.sh
+
+# A question in the turtle's first seconds waits until there is an answer.
+# `ros2 topic list` and its kind ask the daemon that runs beside the nodes
+# (ros2_daemon.py), and a daemon knows what it has heard. Hearing takes DDS a
+# moment: on two cores it is over when the view is up, on one busy core the
+# simulator's announcement is missed and repeated three seconds later. So,
+# while the turtle is young, this waits until the daemon has heard the
+# simulator, by the one thing every turtle has: a publisher of
+# /turtle/status. Later it does not wait at all, and where no turtle runs
+# (`docker run ... ros2 ...`) there is nothing to wait for.
+YOUNG_FOR_S=30
+started_at=/tmp/turtle-started-at
+if [ -r "$started_at" ]; then
+    young_until=$(($(cat "$started_at") + YOUNG_FOR_S))
+    daemon="http://127.0.0.1:$((11511 + ${ROS_DOMAIN_ID:-0}))/ros2cli/"
+    question='<?xml version="1.0"?><methodCall><methodName>count_publishers</methodName>'
+    question+='<params><param><value><string>/turtle/status</string></value></param></params>'
+    question+='</methodCall>'
+    heard() {
+        local answer
+        answer=$(curl -fsS -m 2 -H 'Content-Type: text/xml' -d "$question" "$daemon" 2> /dev/null) \
+            && grep -q '<int>[1-9]' <<< "$answer"
+    }
+    if ! heard && [ "$(date +%s)" -lt "$young_until" ]; then
+        while ! heard && [ "$(date +%s)" -lt "$young_until" ]; do sleep 0.2; done
+        # The simulator's other endpoints arrive with the first one, give or
+        # take a few packets.
+        sleep 0.5
+    fi
+fi
+
 exec "/opt/ros/$ROS_DISTRO/bin/ros2" "$@"
