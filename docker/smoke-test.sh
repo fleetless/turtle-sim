@@ -20,7 +20,8 @@ patience=${SMOKE_PATIENCE:-1}
 
 NO_TOKEN="FLEETLESS_TOKEN is not set: simulator and view are running, no bridge was started."
 TOPICS="/cmd_vel /odom /tf /tf_static /scan /range/front /range/left /range/right
-        /battery_state /turtle/status /turtle/world /map"
+        /battery_state /turtle/status /turtle/world /map
+        /turtle/camera/top/image_raw /turtle/camera/eye/image_raw"
 
 # What is searched is fetched whole first and searched after. A pipe into
 # `grep -q` ends when grep has seen enough, and under pipefail the writer it
@@ -115,6 +116,59 @@ graph_is_complete() {
 }
 within 30 graph_is_complete || fail "\`ros2 topic list\` inside does not name every topic"
 pass "\`ros2 topic list\` inside names the topics"
+
+# --- Both cameras, on the shared memory Docker gives a container ---------------
+# 64 MB of /dev/shm, and ROS moves messages between processes through it. A
+# `top` picture is 691 kB, ten times a second. A subscriber like the bridge's,
+# a process of its own inside the container, counts both for five seconds.
+[ "$(docker inspect --format '{{.HostConfig.ShmSize}}' "$name")" = 67108864 ] \
+    || fail "the container was not started with Docker's default /dev/shm of 64 MB"
+pictures=$(docker exec -i "$name" /opt/turtle/entrypoint.sh python3 - << 'PYTHON'
+import os
+import time
+
+import rclpy
+from sensor_msgs.msg import Image
+
+rclpy.init()
+node = rclpy.create_node("smoke_test")
+heard = {"top": [], "eye": []}
+for camera, pictures in heard.items():
+    node.create_subscription(
+        Image,
+        f"/turtle/camera/{camera}/image_raw",
+        lambda image, pictures=pictures: pictures.append((time.monotonic(), image)),
+        10,
+    )
+# Until both have been heard once, then five seconds more.
+deadline = time.monotonic() + 30.0
+while not all(heard.values()) and time.monotonic() < deadline:
+    rclpy.spin_once(node, timeout_sec=0.1)
+since = time.monotonic()
+while time.monotonic() < since + 5.0:
+    rclpy.spin_once(node, timeout_sec=0.1)
+for camera, pictures in heard.items():
+    count = sum(at >= since for at, _ in pictures)
+    image = pictures[-1][1] if pictures else Image()
+    print(camera, f"{image.width}x{image.height}", image.encoding or "-", len(image.data), count)
+in_use = sum(os.path.getsize(os.path.join("/dev/shm", name)) for name in os.listdir("/dev/shm"))
+print("shm", in_use // 2**20)
+PYTHON
+) || fail "the subscriber inside the container did not run: $pictures"
+# Ten a second for five seconds; a busy or an emulated machine may lose some.
+fewest=$((35 / patience))
+for camera in "top 480x480 691200" "eye 320x240 230400"; do
+    read -r slug size bytes <<< "$camera"
+    read -r _ got_size encoding got_bytes count <<< "$(grep "^$slug " <<< "$pictures")"
+    [ "$got_size $encoding $got_bytes" = "$size rgb8 $bytes" ] \
+        || fail "$slug is $got_size $encoding with $got_bytes bytes, not $size rgb8 with $bytes"
+    if [ "$count" -lt "$fewest" ] || [ "$count" -gt 55 ]; then
+        fail "$slug delivered $count pictures in 5 s, not about 50"
+    fi
+    pass "$slug flows: $size rgb8, $count pictures in 5 s"
+done
+read -r _ shm_mb <<< "$(grep "^shm " <<< "$pictures")"
+pass "both on Docker's default /dev/shm: $shm_mb MB of 64 in use"
 
 # --- A second turtle on the same port -----------------------------------------
 # It shares the first one's network, so its view finds the port taken. The

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The one launch file: the simulator, the view and, with a token, the Fleetless Bridge.
+"""The one launch file: the simulator, the cameras, the view and, with a token, the bridge.
 
     ros2 launch fleetless_turtle_bringup turtle.launch.py
 
@@ -69,10 +69,13 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[{"port": from_environment("TURTLE_VIEW_PORT", "8765")}],
     )
+    cameras = Node(package="fleetless_turtle_cameras", executable="cameras", output="screen")
     parts = [
         simulator,
+        cameras,
         viewer,
         needed(simulator, "The simulator"),
+        needed(cameras, "The cameras"),
         needed(viewer, "The view"),
     ]
 
