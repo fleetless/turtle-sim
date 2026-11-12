@@ -147,6 +147,9 @@ def test_every_moving_link_has_a_transform_that_follows_the_joints(graph):
 
     # Turning to the left: the head's joint follows, and so does its transform.
     wait_for(lambda: commands.get_subscription_count() > 0, what="the simulator hearing /cmd_vel")
+    # The transforms above say that robot_state_publisher hears the joints.
+    # This test's own subscription is found a moment later, or earlier.
+    wait_for(lambda: joints, what="/joint_states arriving")
     turn = Twist()
     turn.angular.z = 1.0
     half_of_its_30_degrees = math.radians(15.0)
