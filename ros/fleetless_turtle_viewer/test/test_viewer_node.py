@@ -288,6 +288,14 @@ def test_healthz_is_200_while_the_turtle_talks(view, turtle):
 
 
 def test_a_new_page_is_sent_the_world_first(view, turtle):
+    # The world is latched and by far the largest message. On a busy machine
+    # it may reach the node after the first status; from then on it is what
+    # a page hears first.
+    wait_until(
+        lambda: any(frame["type"] == "world" for frame in frames(1.0)),
+        timeout=20.0,
+        what="the world reaching the view",
+    )
     heard = frames(2.0, until=lambda frame: frame["type"] == "world")
     world = heard[0]
     assert world["type"] == "world"
