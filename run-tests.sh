@@ -38,8 +38,9 @@ run_lint() {
     docker run --rm --name "$NAME-lint" -v "$PWD:/src:ro" -w /src "$IMAGE-unit" sh -euc '
         ruff check --no-cache .
         ruff format --no-cache --check .
-        # Every file with a shell shebang, wherever it lives.
-        grep -rlE "^#!.*[/ ](ba)?sh( |$)" run-tests.sh docker scripts 2> /dev/null | xargs shellcheck
+        # Every file with a shell shebang, and the one that is only sourced.
+        { grep -rlE "^#!.*[/ ](ba)?sh( |$)" run-tests.sh docker scripts; ls docker/*.sh; } \
+            | sort -u | xargs shellcheck
         if [ -d .github/workflows ]; then actionlint; fi
     '
 }
@@ -69,8 +70,8 @@ run_yaml() {
 }
 
 run_image() {
-    echo "run-tests.sh: no Dockerfile to build yet." >&2
-    return 1
+    docker build -t "$IMAGE" .
+    SMOKE_NAME="$NAME-smoke" SMOKE_PORT="${TURTLE_TEST_PORT:-8765}" docker/smoke-test.sh "$IMAGE"
 }
 
 run() {

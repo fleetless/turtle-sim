@@ -11,6 +11,16 @@
   <license>Apache-2.0</license>
   <url type="repository">https://github.com/fleetless/turtle-sim</url>
 
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>fleetless_turtle_sim</exec_depend>
+  <exec_depend>fleetless_turtle_viewer</exec_depend>
+  <!-- Included when FLEETLESS_TOKEN is set. It comes from Fleetless's apt
+       repository, not from rosdep; the Dockerfile installs it. -->
+  <exec_depend>fleetless_bridge</exec_depend>
+
   <test_depend>python3-pytest</test_depend>
 
   <export>
