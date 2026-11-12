@@ -1,33 +1,47 @@
 # SPDX-License-Identifier: Apache-2.0
 """The simulator node: a thin adapter between the core and ROS.
 
-It steps the simulation from one 50 Hz timer, hands it every `/cmd_vel`, and
-publishes what the core knows at the rates a real robot would. It does no
-physics of its own; `core/simulation.py` is the file to read for that. A
-timer that comes late takes the steps it missed, up to a tenth of a second
-of them, so a busy machine does not slow the turtle down.
+It steps the simulation from one 50 Hz timer, hands it every `/cmd_vel`,
+every service call and every goal, and publishes what the core knows at the
+rates a real robot would. It does no physics of its own; `core/simulation.py`
+is the file to read for that. A timer that comes late takes the steps it
+missed, up to a tenth of a second of them, so a busy machine does not slow
+the turtle down.
+
+One thread spins all of it, so no callback may wait. An action's execute
+callback is a coroutine: it hands the goal to the simulation and awaits a
+future, and the step timer completes that future when the goal has ended.
+In between the callback is not running at all.
 """
 
 import array
 import math
 import threading
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import rclpy
+from fleetless_turtle_msgs.action import Dock, DriveTo, DriveToSquare
 from fleetless_turtle_msgs.msg import TurtleStatus
 from fleetless_turtle_msgs.msg import World as WorldMsg
-from geometry_msgs.msg import TransformStamped, Twist
-from nav_msgs.msg import OccupancyGrid, Odometry
+from fleetless_turtle_msgs.srv import SetBlock, Teleport
+from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rcl_interfaces.msg import ParameterDescriptor
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
+from rclpy.task import Future
 from sensor_msgs.msg import BatteryState, JointState, LaserScan, Range
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from .core import constants as c
+from .core.goals import SUCCEEDED, DockFeedback, DockResult, DriveFeedback, DriveResult, Goal
 from .core.pace import Pace
 from .core.simulation import Simulation
 from .core.world import MapError, World
@@ -61,6 +75,22 @@ def _yaw(angle: float) -> tuple[float, float]:
     return math.sin(angle / 2.0), math.cos(angle / 2.0)
 
 
+@dataclass
+class _Running:
+    """A goal between the simulation, which runs it, and the caller, who waits for it."""
+
+    goal: Goal
+    handle: ServerGoalHandle
+    ended: Future
+    """Completed with the goal's result by whoever sees first that it has ended."""
+    feedback: type
+    """The action's feedback message."""
+    feedback_due: float
+    """The simulated time of the next feedback."""
+    phase: str | None = None
+    """The phase the last feedback named."""
+
+
 class SimulatorNode(Node):
     def __init__(self):
         super().__init__(NODE_NAME)
@@ -91,6 +121,11 @@ class SimulatorNode(Node):
         self._pace = Pace()
         self._warned_about_non_finite = False
         self._published_world_version = None
+        self._published_plan_version = None
+        self._published_trail_version = None
+        self._trail_published_at = -math.inf
+        # The goals whose callers still wait for a result.
+        self._running: list[_Running] = []
 
         self._odometry = self.create_publisher(Odometry, "odom", 10)
         self._scan = self.create_publisher(LaserScan, "scan", 10)
@@ -102,12 +137,39 @@ class SimulatorNode(Node):
         self._status = self.create_publisher(TurtleStatus, "turtle/status", 10)
         self._world = self.create_publisher(WorldMsg, "turtle/world", LATCHED)
         self._map = self.create_publisher(OccupancyGrid, "map", LATCHED)
+        self._plan = self.create_publisher(Path, "turtle/plan", LATCHED)
+        self._trail = self.create_publisher(Path, "turtle/trail", LATCHED)
         self._tf = TransformBroadcaster(self)
         self._tf_static = StaticTransformBroadcaster(self)
         self._publish_static_transforms()
-        self._publish_world()
+        # The latched topics say something from the start: the world as
+        # loaded, no path, no trail.
+        self._publish_what_changed()
 
         self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, 10)
+
+        self.create_service(Trigger, "turtle/reset", self._on_reset)
+        self.create_service(Teleport, "turtle/teleport", self._on_teleport)
+        self.create_service(SetBlock, "turtle/set_block", self._on_set_block)
+        self.create_service(SetBool, "turtle/set_trail", self._on_set_trail)
+
+        # Three servers, one navigator. Every goal is accepted and answered
+        # through its result, and so is every cancel.
+        self._actions = [
+            ActionServer(
+                self,
+                action,
+                name,
+                execute_callback=execute,
+                goal_callback=lambda _request: GoalResponse.ACCEPT,
+                cancel_callback=lambda _handle: CancelResponse.ACCEPT,
+            )
+            for action, name, execute in (
+                (DriveTo, "turtle/drive_to", self._drive_to),
+                (DriveToSquare, "turtle/drive_to_square", self._drive_to_square),
+                (Dock, "turtle/dock", self._dock),
+            )
+        ]
 
         self.create_timer(c.STEP_S, self._step)
         self.create_timer(1.0 / c.ODOMETRY_RATE_HZ, self._publish_odometry)
@@ -157,21 +219,114 @@ class SimulatorNode(Node):
         """A velocity command. Only linear.x and angular.z mean anything to two wheels."""
         with self._lock:
             self._sim.command(twist.linear.x, twist.angular.z)
+        self._settle()  # a command other than zero ends a goal
 
     def _step(self) -> None:
         with self._lock:
             for _ in range(self._pace.due(time.monotonic())):
                 self._sim.step()
             non_finite = self._sim.drive.non_finite_commands
-            world_changed = self._sim.world_version != self._published_world_version
         if non_finite and not self._warned_about_non_finite:
             self._warned_about_non_finite = True
             self.get_logger().warning(
                 "A /cmd_vel held a value that is not a number. It counted as 0, "
                 "and so will the next ones. This is logged once."
             )
-        if world_changed:
-            self._publish_world()
+        self._settle()
+        self._publish_what_changed()
+
+    # --- Services -------------------------------------------------------------
+    # The core checks the arguments and words the answer; a call from inside
+    # ROS has no cloud in front of it.
+
+    def _on_reset(self, _request: Trigger.Request, response: Trigger.Response):
+        with self._lock:
+            response.success, response.message = self._sim.reset()
+        return self._answered(response)
+
+    def _on_teleport(self, request: Teleport.Request, response: Teleport.Response):
+        with self._lock:
+            response.success, response.message = self._sim.teleport(
+                request.x, request.y, request.heading_deg
+            )
+        return self._answered(response)
+
+    def _on_set_block(self, request: SetBlock.Request, response: SetBlock.Response):
+        with self._lock:
+            response.success, response.message = self._sim.set_block(
+                request.x, request.y, request.occupied
+            )
+        return self._answered(response)
+
+    def _on_set_trail(self, request: SetBool.Request, response: SetBool.Response):
+        with self._lock:
+            response.success, response.message = self._sim.set_trail(request.data)
+        return self._answered(response)
+
+    def _answered(self, response):
+        """What a service changed is out before its answer is: a goal ended, a cell, the path."""
+        self._settle()
+        self._publish_what_changed()
+        return response
+
+    # --- Actions --------------------------------------------------------------
+
+    async def _drive_to(self, handle: ServerGoalHandle) -> DriveTo.Result:
+        request = handle.request
+        return await self._run(handle, DriveTo, lambda: self._sim.drive_to(request.x, request.y))
+
+    async def _drive_to_square(self, handle: ServerGoalHandle) -> DriveToSquare.Result:
+        square = handle.request.square
+        return await self._run(handle, DriveToSquare, lambda: self._sim.drive_to_square(square))
+
+    async def _dock(self, handle: ServerGoalHandle) -> Dock.Result:
+        target = handle.request.target_percent
+        return await self._run(handle, Dock, lambda: self._sim.dock(target))
+
+    async def _run(self, handle: ServerGoalHandle, action, start):
+        """One goal, from the caller's hands into the simulation's and back.
+
+        It does not wait in the sense a thread waits: `await` hands the one
+        thread back to the executor, and this coroutine goes on when the
+        step timer has completed `ended`.
+        """
+        with self._lock:
+            goal = start()
+            due = self._sim.time
+        ended = Future()
+        self._running.append(_Running(goal, handle, ended, action.Feedback, due))
+        # The new goal has ended the one before it, and a goal that asked
+        # for the impossible has ended itself: both are answered here.
+        self._settle()
+        result = await ended
+
+        if result.reason in SUCCEEDED:
+            handle.succeed()
+        elif result.reason == "canceled":
+            handle.canceled()
+        else:
+            handle.abort()
+        return _message(action.Result(), result)
+
+    def _settle(self) -> None:
+        """Between the callers and their goals: cancels in, feedback and results out."""
+        with self._lock:
+            now = self._sim.time
+        for running in list(self._running):
+            goal = running.goal
+            if goal.result is None and running.handle.is_cancel_requested:
+                goal.cancel()  # the turtle brakes; the result follows once it stands
+            if goal.result is not None:
+                self._running.remove(running)
+                running.ended.set_result(goal.result)
+                continue
+            # Feedback twice a second, and at once when the phase changes: a
+            # turtle that plans again does so in less than half a second.
+            feedback = goal.feedback()
+            if now >= running.feedback_due - c.TIME_TOLERANCE_S or feedback.phase != running.phase:
+                running.feedback_due = now + 1.0 / c.GOAL_FEEDBACK_RATE_HZ
+                running.phase = feedback.phase
+                running.handle.publish_feedback(_message(running.feedback(), feedback))
 
     # --- Out -----------------------------------------------------------------
 
@@ -287,6 +442,46 @@ class SimulatorNode(Node):
         joints.position = list(positions.values())
         self._joints.publish(joints)
 
+    def _publish_what_changed(self) -> None:
+        """The latched topics: the world and the path on change, the trail at most once a second."""
+        with self._lock:
+            world = self._sim.world_version != self._published_world_version
+            plan = self._sim.plan_version != self._published_plan_version
+            trail = self._sim.trail_version != self._published_trail_version
+        if world:
+            self._publish_world()
+        if plan:
+            with self._lock:
+                points = self._sim.plan
+                self._published_plan_version = self._sim.plan_version
+            self._plan.publish(self._path(points))
+        if trail and time.monotonic() - self._trail_published_at >= 1.0 / c.TRAIL_RATE_HZ:
+            with self._lock:
+                points = tuple(self._sim.trail)
+                self._published_trail_version = self._sim.trail_version
+            self._trail_published_at = time.monotonic()
+            self._trail.publish(self._path(points))
+
+    def _path(self, points) -> Path:
+        """Points in metres as a path in the map frame, each pose looking along the path."""
+        path = Path()
+        path.header.stamp = self.get_clock().now().to_msg()
+        path.header.frame_id = "map"
+        z, w = 0.0, 1.0
+        for index, (x, y) in enumerate(points):
+            if index + 1 < len(points):
+                ahead_x, ahead_y = points[index + 1]
+                if (ahead_x, ahead_y) != (x, y):
+                    z, w = _yaw(math.atan2(ahead_y - y, ahead_x - x))
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.z = z
+            pose.pose.orientation.w = w
+            path.poses.append(pose)
+        return path
+
     def _publish_world(self) -> None:
         with self._lock:
             kinds = self._sim.world.kinds.copy()
@@ -337,6 +532,19 @@ class SimulatorNode(Node):
             ]
         )
 
+    def destroy_node(self) -> None:
+        # The action servers first: they hold on to the node.
+        for server in self._actions:
+            server.destroy()
+        super().destroy_node()
+
+
+def _message(message, snapshot: DriveResult | DockResult | DriveFeedback | DockFeedback):
+    """A result or a feedback of the core as its ROS message: the fields have the same names."""
+    for name in message.get_fields_and_field_types():
+        setattr(message, name, getattr(snapshot, name))
+    return message
+
 
 def run(stop: threading.Event, args=None) -> int:
     """Run the node until `stop` is set. `start.py` sets it on SIGINT and SIGTERM.
@@ -363,8 +571,8 @@ def run(stop: threading.Event, args=None) -> int:
     # One thread. Under rclpy's multi-threaded executor the step timer
     # stalled for 90 to 560 ms whenever /cmd_vel arrived, and `Pace` drops a
     # lag of more than 0.1 s: on a busy machine the turtle drove at 87 % of
-    # the commanded speed. No callback of this node waits for another one,
-    # so one thread is all they need.
+    # the commanded speed. No callback of this node waits for another one:
+    # a goal's callback awaits a future and is off the thread meanwhile.
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     failures = []

@@ -20,11 +20,13 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <!-- `from tf2_ros import ...` in Python is this package, not tf2_ros. -->
   <exec_depend>tf2_ros_py</exec_depend>
   <exec_depend>fleetless_turtle_msgs</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>action_msgs</test_depend>
   <test_depend>ament_index_python</test_depend>
   <test_depend>launch</test_depend>
   <test_depend>launch_ros</test_depend>
