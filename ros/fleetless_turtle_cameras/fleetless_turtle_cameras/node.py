@@ -10,6 +10,10 @@ files to read for that.
 
 It is a node of its own so that a picture never delays a step of the
 simulation. A camera nobody subscribes to is not drawn.
+
+Anybody on the graph may publish what this node reads. So it looks at a
+world and a pose before it takes them: what the renderers cannot draw is
+refused here, with one line in the log, and never reaches them.
 """
 
 import array
@@ -45,10 +49,25 @@ PICTURES = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
 
 
 def _points(path: Path) -> np.ndarray:
-    """A path's poses as rows of (x, y). A point that is no number is left out."""
+    """A path's poses as rows of (x, y).
+
+    A point that cannot be drawn is left out: one that is no number, which
+    fails every comparison, or one too far from the map's origin.
+    """
     points = np.array([(p.pose.position.x, p.pose.position.y) for p in path.poses], float)
     points = points.reshape(-1, 2)
-    return points[np.isfinite(points).all(axis=1)]
+    return points[(np.abs(points) <= look.POSE_LIMIT_M).all(axis=1)]
+
+
+def _fault_of_a_world(width: int, height: int, cells: int) -> tuple[str, str] | None:
+    """Why a world cannot be drawn: the sort of fault and the words for it. None if it can."""
+    if cells != width * height:
+        return "count", f"came with {cells} of them"
+    if cells == 0:
+        return "empty", "has none"
+    if max(width, height) > look.WORLD_CELLS_LIMIT:
+        return "size", f"is more than the cameras draw, {look.WORLD_CELLS_LIMIT} along a side"
+    return None
 
 
 class CamerasNode(Node):
@@ -59,7 +78,7 @@ class CamerasNode(Node):
         self._pose = None
         self._plan = np.empty((0, 2))
         self._trail = np.empty((0, 2))
-        self._warned_about_the_world = False
+        self._refused = set()
 
         # Each camera: its publisher, its renderer and the frame its picture is in.
         self._cameras = [
@@ -87,23 +106,40 @@ class CamerasNode(Node):
 
     # --- In ------------------------------------------------------------------
 
+    def _refuse(self, sort: str, sentence: str) -> None:
+        """Say once that an input of this sort was refused. The pictures go on from what was."""
+        if sort not in self._refused:
+            self._refused.add(sort)
+            self.get_logger().warning(f"{sentence} This is logged once.")
+
     def _on_odometry(self, odometry: Odometry) -> None:
         pose = odometry.pose.pose
+        x, y = pose.position.x, pose.position.y
         heading = 2.0 * math.atan2(pose.orientation.z, pose.orientation.w)
-        if all(math.isfinite(value) for value in (pose.position.x, pose.position.y, heading)):
-            self._pose = (pose.position.x, pose.position.y, heading)
+        limit = look.POSE_LIMIT_M
+        # A value that is no number fails every comparison, so it is refused
+        # together with what lies too far out.
+        if not (abs(x) <= limit and abs(y) <= limit and math.isfinite(heading)):
+            self._refuse(
+                "pose",
+                f"An /odom pose of x {x:g} m, y {y:g} m, heading {heading:g} rad is not taken: "
+                f"the cameras draw from numbers, up to {limit:g} m from the map's origin.",
+            )
+            return
+        self._pose = (x, y, heading)
 
     def _on_world(self, world: World) -> None:
-        if world.width == 0 or len(world.kinds) != world.width * world.height:
-            if not self._warned_about_the_world:
-                self._warned_about_the_world = True
-                self.get_logger().warning(
-                    f"A /turtle/world of {world.width} x {world.height} cells came with "
-                    f"{len(world.kinds)} of them. It is not drawn. This is logged once."
-                )
+        width, height, cells = world.width, world.height, len(world.kinds)
+        fault = _fault_of_a_world(width, height, cells)
+        if fault is not None:
+            sort, words = fault
+            self._refuse(
+                f"world, {sort}",
+                f"A /turtle/world of {width} x {height} cells {words}. It is not drawn.",
+            )
             return
         # A copy of its own: the renderers keep what they drew from it.
-        self._kinds = np.array(world.kinds, np.uint8).reshape(world.height, world.width)
+        self._kinds = np.array(world.kinds, np.uint8).reshape(height, width)
 
     def _on_plan(self, plan: Path) -> None:
         self._plan = _points(plan)

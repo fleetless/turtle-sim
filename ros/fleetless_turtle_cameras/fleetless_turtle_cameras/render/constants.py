@@ -12,6 +12,18 @@ import math
 FRAME_RATE_HZ = 10.0
 """Pictures per second, from both cameras."""
 
+# --- What the cameras draw from ----------------------------------------------
+
+WORLD_CELLS_LIMIT = 512
+"""The most cells along one side of a world that is drawn: twice the
+simulator's grid. `top` keeps the whole world as one picture, and a picture
+has to fit in memory."""
+
+POSE_LIMIT_M = 100.0
+"""How far from the map's origin, along x or y, the turtle or a point of a
+path may lie and still be drawn. The largest world ends at 51.2 m; much
+further out a number is no place, and a pixel no whole number."""
+
 # --- `top`: the map around the turtle, north up ------------------------------
 
 TOP_SIZE_PX = 480

@@ -326,3 +326,90 @@ def test_a_world_larger_than_the_simulators_is_drawn_and_its_far_squares_go_unna
     row, column = pixel_of(scene, 25.6, 27.2)
     corner = picture[row + 2 : row + 16, column + 2 : column + 24].astype(int)
     assert corner.sum(axis=2).min() > 0.9 * np.array(look.LAWN_OTHER_SQUARE).sum()
+
+
+# --- Whatever the node lets through is drawn ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "columns"),
+    [(1, 1), (1, 300), (300, 1), (look.WORLD_CELLS_LIMIT, look.WORLD_CELLS_LIMIT)],
+    ids=["one cell", "one row", "one column", "the largest"],
+)
+def test_a_world_of_any_size_the_node_takes_is_drawn(rows, columns):
+    cells = np.full((rows, columns), c.FREE, np.uint8)
+    scene = Scene(cells, *cell_centre(0, 0), 0.0)
+    picture = top.render(scene)
+    assert picture.shape == (480, 480, 3)
+    centre = picture[MIDDLE - 1 : MIDDLE + 1, MIDDLE - 1 : MIDDLE + 1]
+    assert (centre == look.TURTLE_SHELL_TOP).all()
+    # The world's south-west corner is under the turtle: south and west of it is nothing.
+    assert colour_at(picture, (MIDDLE + 30, MIDDLE - 30)) == look.OUTSIDE
+    # Lawn as far east and north as the world goes, and nothing past it:
+    # looked at 30 pixels from the turtle, clear of its ring, and 30 from
+    # the picture's edge.
+    for cells_that_way, where in (
+        (columns, lambda px: (MIDDLE, MIDDLE + px)),
+        (rows, lambda px: (MIDDLE - px, MIDDLE)),
+    ):
+        to_the_edge_px = cells_that_way * PX_PER_CELL - PX_PER_CELL // 2
+        for px in (30, MIDDLE - 30):
+            colour = colour_at(picture, where(px))
+            if px < to_the_edge_px:
+                assert near(colour, look.LAWN, 0.08), (cells_that_way, px)
+            else:
+                assert colour == look.OUTSIDE, (cells_that_way, px)
+
+
+def test_kinds_the_simulator_does_not_know_are_drawn_as_lawn(kinds):
+    kinds[100, 104:108] = 9
+    scene = scene_at(kinds)
+    picture = top.render(scene)
+    assert near(colour_at(picture, middle_of_cell(scene, 106, 100)), look.LAWN)
+
+
+@pytest.mark.parametrize(
+    ("x", "y"),
+    [
+        (look.POSE_LIMIT_M, look.POSE_LIMIT_M),
+        (-look.POSE_LIMIT_M, look.POSE_LIMIT_M),
+        (look.POSE_LIMIT_M, -look.POSE_LIMIT_M),
+        (-look.POSE_LIMIT_M, -look.POSE_LIMIT_M),
+        (-7.0, 12.8),
+        (12.8, 32.0),
+    ],
+)
+def test_far_outside_the_world_the_turtle_is_the_middle_of_a_picture_of_nothing(kinds, x, y):
+    picture = top.render(Scene(kinds, x, y, 1e300))
+    centre = picture[MIDDLE - 1 : MIDDLE + 1, MIDDLE - 1 : MIDDLE + 1]
+    assert (centre == look.TURTLE_SHELL_TOP).all(axis=2).any()
+    # More than half a window from the world: no cell of it is in the picture.
+    drawn = (picture != look.OUTSIDE).any(axis=2)
+    rows, columns = np.nonzero(drawn)
+    # What is drawn is the turtle, its ring and its arrowhead, whose tip is
+    # 1.75 ring radii from the middle.
+    reach_px = 2.0 * look.TOP_MARKER_RADIUS_M * PX_PER_M
+    assert np.hypot(rows + 0.5 - MIDDLE, columns + 0.5 - MIDDLE).max() < reach_px
+
+
+def test_a_turtle_just_outside_the_world_sees_the_edge_where_it_is(kinds):
+    # Two metres west of the grid: the world begins two metres east of the middle.
+    picture = top.render(Scene(kinds, -2.0, 12.85, 0.0))
+    assert colour_at(picture, (MIDDLE + 40, MIDDLE + round(1.9 * PX_PER_M))) == look.OUTSIDE
+    assert near(colour_at(picture, (MIDDLE + 40, MIDDLE + round(2.3 * PX_PER_M))), look.LAWN, 0.08)
+
+
+def test_points_at_the_bound_do_no_harm(kinds):
+    limit = look.POSE_LIMIT_M
+    far = np.array(
+        [[limit, limit], [-limit, limit], [10.5, 10.5], [limit, -limit], [-limit, -limit]]
+    )
+    picture = top.render(scene_at(kinds, plan=far, trail=far))
+    assert picture.shape == (480, 480, 3)
+    # The legs to and from the near point cross the window.
+    assert (picture == look.PLAN).all(axis=2).any()
+
+
+def test_the_bounds_leave_room_for_the_simulators_world():
+    assert look.WORLD_CELLS_LIMIT >= c.GRID_CELLS
+    assert look.POSE_LIMIT_M > look.WORLD_CELLS_LIMIT * c.CELL_SIZE_M
