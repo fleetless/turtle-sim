@@ -135,7 +135,7 @@ This is the shipped one, `maps/garden.png`, drawn by
 
 ## ⚙️ How it works
 
-One container, one `ros2 launch`, three processes:
+One container, one launch file, three processes:
 
 | Process | Package | Does |
 |---|---|---|
