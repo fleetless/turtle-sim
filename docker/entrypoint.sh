@@ -38,21 +38,27 @@ trap stop INT TERM
 # interrupt with its default, the stack trace. In a session of its own, so
 # that Ctrl-C in a terminal reaches this shell alone and takes the same
 # path as `docker stop`.
-setsid /opt/turtle/start.sh &
+#
+# bash announces a job that a signal ended ("User defined signal 1"), on its
+# own stderr, at the first moment it notices: inside `wait`, or between two
+# lines when the job ended there. A stop that comes before the turtle
+# listens ends it that way; that is this script's own doing and nobody's
+# news. So this shell's stderr goes nowhere from before the turtle is born
+# until the script ends, and the turtle is handed the real one. Whatever
+# this script itself has to say after this line goes to descriptor 3.
+exec 3>&2 2> /dev/null
+setsid /opt/turtle/start.sh 2>&3 3>&- &
 turtle=$!
 # A stop that came before the line above found nobody to tell.
-[ -z "$stopping" ] || kill -USR1 "$turtle" 2> /dev/null || true
+[ -z "$stopping" ] || kill -USR1 "$turtle" || true
 
 # `wait` returns as soon as a stop arrives, with the turtle still on its way
-# down. So: wait until it is gone, then ask how it ended. Whichever `wait`
-# finds the turtle ended by a signal would have bash announce it ("User
-# defined signal 1"); that is this script's own doing and nobody's news, so
-# the announcement goes nowhere. The status stays.
-while kill -0 "$turtle" 2> /dev/null; do
-    wait "$turtle" 2> /dev/null || true
+# down. So: wait until it is gone, then ask how it ended.
+while kill -0 "$turtle"; do
+    wait "$turtle" || true
 done
 code=0
-wait "$turtle" 2> /dev/null || code=$?
+wait "$turtle" || code=$?
 
 # 138 is "ended by SIGUSR1": the stop came before the turtle listened.
 # Stopped on request is stopped, whenever the request came.
