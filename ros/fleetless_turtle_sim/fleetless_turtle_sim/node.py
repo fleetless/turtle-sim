@@ -281,8 +281,7 @@ class SimulatorNode(Node):
         return await self._run(handle, DriveToSquare, lambda: self._sim.drive_to_square(square))
 
     async def _dock(self, handle: ServerGoalHandle) -> Dock.Result:
-        target = handle.request.target_percent
-        return await self._run(handle, Dock, lambda: self._sim.dock(target))
+        return await self._run(handle, Dock, self._sim.dock)
 
     async def _run(self, handle: ServerGoalHandle, action, start):
         """One goal, from the caller's hands into the simulation's and back.

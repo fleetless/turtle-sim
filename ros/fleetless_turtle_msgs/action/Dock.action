@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Drives the turtle onto the charging pad and waits there until the battery
-# has reached the target.
-float32 target_percent      # 1..100
+# Drives the turtle onto the charging pad.
 ---
 bool success
 string reason
@@ -10,6 +8,6 @@ float32 battery_percent
 float32 duration_s
 ---
 # Feedback, 2 Hz.
-string phase                # driving | charging
+string phase                # planning | driving | replanning
 float32 battery_percent
 float32 remaining_m
