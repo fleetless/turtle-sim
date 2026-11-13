@@ -10,11 +10,16 @@ a second. The simulator's thread, about to publish, waited for that lock.
 
 The simulator's process therefore speaks UDP only: under the discovery
 range LOCALHOST, which the image sets, the launch file gives it a Fast DDS
-profile of its own. The tests hold, in this order:
+profile of its own, and tells it to leave the range to its middleware. That
+is safe only where the profile is what the process then goes by: a
+middleware left to itself announces a node to whoever shares the network.
+The tests hold, in this order:
 
-- where ROS would have said more than the profile says (another range,
-  peers named in ROS_STATIC_PEERS) or would pass over it
-  (ROS_LOCALHOST_ONLY=1), the simulator is left as ROS has it;
+- what the launch file decides, by its own function under every setting
+  that matters: the range, peers, ROS_LOCALHOST_ONLY, the middleware, and a
+  Fast DDS profile of the user's own;
+- in a bringup under five such settings, the simulator is left as ROS has
+  it, and runs no thread for multicast;
 - a profile that cannot be read ends the start with one sentence. Fast DDS
   would pass over it with one line and go on with its defaults, shared
   memory and multicast;
@@ -29,6 +34,7 @@ another. It is the guard. The proof is a measurement,
 `tools/join-probe.sh`, in fresh containers and thirty joins each.
 """
 
+import importlib.util
 import itertools
 import json
 import os
@@ -43,7 +49,7 @@ from pathlib import Path
 
 import pytest
 import rclpy
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from fleetless_turtle_msgs.srv import Teleport
 from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
@@ -114,18 +120,40 @@ def stamp(message) -> float:
     return message.header.stamp.sec + message.header.stamp.nanosec / 1e9
 
 
+WHAT_ROS_IS_TOLD = (
+    "ROS_AUTOMATIC_DISCOVERY_RANGE",
+    "ROS_STATIC_PEERS",
+    "ROS_LOCALHOST_ONLY",
+    "RMW_IMPLEMENTATION",
+    "FASTRTPS_DEFAULT_PROFILES_FILE",
+)
+"""Every variable the launch file asks before it gives the simulator its profile."""
+
+A_PROFILE_OF_THE_USERS_OWN = """<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="a_users_own" is_default_profile="true">
+      <rtps>
+        <sendSocketBufferSize>1048576</sendSocketBufferSize>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
+"""
+"""A profile as somebody tunes Fast DDS with: it says nothing about discovery."""
+
+
 def environment(discovery_range: str | None, **more: str) -> dict[str, str]:
     """The bringup's environment: the garden, a free port, no token, and what ROS is told."""
     variables = {**os.environ, "TURTLE_MAP": str(GARDEN), "TURTLE_VIEW_PORT": str(free_port())}
-    for name in ("FLEETLESS_TOKEN", "ROS_AUTOMATIC_DISCOVERY_RANGE", "ROS_STATIC_PEERS"):
+    for name in ("FLEETLESS_TOKEN", *WHAT_ROS_IS_TOLD):
         variables.pop(name, None)
-    variables.pop("ROS_LOCALHOST_ONLY", None)
     if discovery_range is not None:
         variables["ROS_AUTOMATIC_DISCOVERY_RANGE"] = discovery_range
     return {**variables, **more}
 
 
-def launch(variables: dict[str, str], file: str | None = None) -> subprocess.Popen:
+def launch(variables: dict[str, str], file: str | None = None, cwd=None) -> subprocess.Popen:
     """`ros2 launch` of the turtle's launch file, or of a copy of it at a path."""
     which = [file] if file else ["fleetless_turtle_bringup", "turtle.launch.py"]
     return subprocess.Popen(
@@ -134,6 +162,7 @@ def launch(variables: dict[str, str], file: str | None = None) -> subprocess.Pop
         stderr=subprocess.STDOUT,
         text=True,
         env=variables,
+        cwd=cwd,
     )
 
 
@@ -193,14 +222,21 @@ def given(executable: str, bringup: subprocess.Popen) -> dict[str, str]:
     return dict(v.split("=", 1) for v in variables if v.split("=", 1)[0] in ours)
 
 
-def listening(executable: str, bringup: subprocess.Popen) -> list[str]:
-    """Fast DDS's threads in that process, once it listens on UDP; until then, none."""
-    threads = dds_threads(executable, bringup)
-    return threads if any(name.startswith("dds.udp.") for name in threads) else []
-
-
 SIMULATOR = "lib/fleetless_turtle_sim/simulator"
 CAMERAS = "lib/fleetless_turtle_cameras/cameras"
+
+# What each node says once it is built. Fast DDS has started every thread of
+# a process by then; one look earlier could miss the last of them.
+UP = {SIMULATOR: "The turtle is on the pad", CAMERAS: "The cameras draw"}
+
+
+def threads_once_up(executable: str, bringup: subprocess.Popen, lines: list[str]) -> list[str]:
+    """Fast DDS's threads in that process, looked at after the node said it is up."""
+    wait_for(lambda: any(UP[executable] in line for line in lines), what=f"{UP[executable]} …")
+    threads = dds_threads(executable, bringup)
+    assert any(name.startswith("dds.udp.") for name in threads), threads
+    return threads
+
 
 # Where every participant of a domain listens for multicast, by the RTPS
 # port rule. A process that has this thread is found by whoever shares its
@@ -212,43 +248,170 @@ def with_shared_memory(threads: list[str]) -> list[str]:
     return [name for name in threads if name.startswith("dds.shm")]
 
 
+# --- What the launch file decides, by its own function -------------------------------
+
+
+@pytest.fixture
+def decide(monkeypatch, tmp_path):
+    """The launch file's `without_shared_memory`, under the image's settings plus what a test names.
+
+    It is given a working directory of its own, with no profile in it, and
+    a clean slate of the variables it asks.
+    """
+    path = Path(get_package_share_directory("fleetless_turtle_bringup")) / "launch"
+    spec = importlib.util.spec_from_file_location("turtle_launch", path / "turtle.launch.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.chdir(tmp_path)
+
+    def decide(**told: str | None) -> dict[str, str]:
+        for name in WHAT_ROS_IS_TOLD:
+            monkeypatch.delenv(name, raising=False)
+        for name, value in {"ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST", **told}.items():
+            if value is not None:
+                monkeypatch.setenv(name, value)
+        return module.without_shared_memory()
+
+    decide.module = module
+    return decide
+
+
+def handed_out(given: dict[str, str]) -> bool:
+    """Whether that is the profile and the range that goes with it, or nothing at all."""
+    if not given:
+        return False
+    assert given["ROS_AUTOMATIC_DISCOVERY_RANGE"] == "SYSTEM_DEFAULT"
+    assert Path(given["FASTRTPS_DEFAULT_PROFILES_FILE"]).name == "simulator.fastdds.xml"
+    assert len(given) == 2
+    return True
+
+
+def test_under_the_images_own_settings_the_profile_is_handed_out(decide):
+    assert handed_out(decide())
+
+
+OTHER_RANGES = [None, "", "SUBNET", "OFF", "SYSTEM_DEFAULT", "localhost"]
+
+
+@pytest.mark.parametrize("discovery_range", OTHER_RANGES)
+def test_under_another_range_it_is_not(decide, discovery_range):
+    assert not handed_out(decide(ROS_AUTOMATIC_DISCOVERY_RANGE=discovery_range))
+
+
+def test_with_peers_named_it_is_not_and_an_empty_list_names_none(decide):
+    assert not handed_out(decide(ROS_STATIC_PEERS="192.0.2.7"))
+    assert handed_out(decide(ROS_STATIC_PEERS=""))
+
+
+@pytest.mark.parametrize(("value", "localhost_only"), [("1", True), ("10", True), ("0", False)])
+def test_ros_localhost_only_counts_as_ros_reads_it(decide, value, localhost_only):
+    """By its first character. Where it counts, the profile is not handed out."""
+    assert handed_out(decide(ROS_LOCALHOST_ONLY=value)) != localhost_only
+
+
+@pytest.mark.parametrize("middleware", [None, "", "rmw_fastrtps_cpp", "rmw_fastrtps_dynamic_cpp"])
+def test_where_fast_dds_is_the_middleware_it_is_handed_out(decide, middleware):
+    """Named, or not named at all: ROS then loads rmw_fastrtps_cpp, which is installed."""
+    assert handed_out(decide(RMW_IMPLEMENTATION=middleware))
+
+
+@pytest.mark.parametrize(
+    "middleware", ["rmw_cyclonedds_cpp", "rmw_zenoh_cpp", "rmw_connextdds", "RMW_FASTRTPS_CPP"]
+)
+def test_under_another_middleware_it_is_not(decide, middleware):
+    """Another middleware reads no Fast DDS profile.
+
+    Given `SYSTEM_DEFAULT` all the same, the simulator had that
+    middleware's own defaults: under Cyclone DDS it announced itself by
+    multicast, and a stranger on the Docker network drove the turtle.
+    """
+    assert not handed_out(decide(RMW_IMPLEMENTATION=middleware))
+
+
+@pytest.mark.parametrize("middleware", [None, ""])
+def test_where_none_is_named_and_fast_dds_is_not_installed_it_is_not(
+    decide, monkeypatch, middleware
+):
+    """ROS then loads whichever middleware it finds."""
+
+    def not_installed(name: str):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(decide.module, "get_package_prefix", not_installed)
+    assert not handed_out(decide(RMW_IMPLEMENTATION=middleware))
+
+
+def test_with_a_profile_named_by_the_user_it_is_not_and_an_empty_name_names_none(decide, tmp_path):
+    own = tmp_path / "own.xml"
+    own.write_text(A_PROFILE_OF_THE_USERS_OWN)
+    assert not handed_out(decide(FASTRTPS_DEFAULT_PROFILES_FILE=str(own)))
+    assert handed_out(decide(FASTRTPS_DEFAULT_PROFILES_FILE=""))
+
+
+def test_with_a_profile_in_the_working_directory_it_is_not(decide, tmp_path):
+    """Fast DDS reads that file after the one it was named, and the later one wins."""
+    (tmp_path / "DEFAULT_FASTRTPS_PROFILES.xml").write_text(A_PROFILE_OF_THE_USERS_OWN)
+    assert not handed_out(decide())
+
+
 # --- Before the bringup that the other tests share: starts of their own -------
 
 
 @pytest.mark.parametrize(
-    ("discovery_range", "more", "multicast"),
+    ("discovery_range", "more", "own_profile"),
     [
-        # No range set is ROS's own default: both transports, and multicast.
-        pytest.param(None, {}, True, id="no range"),
+        # Another range, and one that keeps the test's nodes to themselves:
+        # under OFF a node looks for nobody and answers nobody.
+        pytest.param("OFF", {}, None, id="another range"),
         # ROS has every node look for these peers. The profile knows none.
-        pytest.param("LOCALHOST", {"ROS_STATIC_PEERS": "127.0.0.1"}, False, id="peers"),
+        pytest.param("LOCALHOST", {"ROS_STATIC_PEERS": "127.0.0.1"}, None, id="peers"),
         # The older way to say LOCALHOST. ROS then passes over the range
         # the simulator would be given, and the profile would be for show.
-        pytest.param("LOCALHOST", {"ROS_LOCALHOST_ONLY": "1"}, False, id="localhost only"),
+        pytest.param("LOCALHOST", {"ROS_LOCALHOST_ONLY": "1"}, None, id="localhost only"),
+        # A profile of the user's own, by either way Fast DDS finds one.
+        pytest.param("LOCALHOST", {}, "FASTRTPS_DEFAULT_PROFILES_FILE", id="a profile, named"),
+        pytest.param("LOCALHOST", {}, "DEFAULT_FASTRTPS_PROFILES.xml", id="a profile, found"),
     ],
 )
 def test_where_ros_would_say_otherwise_the_simulator_is_left_as_ros_has_it(
-    discovery_range, more, multicast
+    discovery_range, more, own_profile, tmp_path
 ):
-    """Shared memory, as every node has it, and multicast where ROS's range has it.
+    """Started with what the launch itself was given, with shared memory, and without multicast.
 
-    Whoever names another range or peers of their own chose that. The
-    profile says LOCALHOST and nothing else: it would hide the simulator
-    from the machines the other nodes are shown to.
+    Whoever names another range, peers or a profile of their own chose
+    that. The simulator's profile says LOCALHOST and nothing else, and
+    under `SYSTEM_DEFAULT` whatever takes its place decides who finds the
+    simulator: the second profile case, on a head that handed the profile
+    out regardless, ran the simulator with a thread for multicast.
     """
-    bringup = launch(environment(discovery_range, **more))
+    variables = environment(discovery_range, **more)
+    as_given = {"ROS_AUTOMATIC_DISCOVERY_RANGE": discovery_range}
+    if own_profile == "FASTRTPS_DEFAULT_PROFILES_FILE":
+        named = tmp_path / "own.xml"
+        named.write_text(A_PROFILE_OF_THE_USERS_OWN)
+        variables[own_profile] = as_given[own_profile] = str(named)
+    elif own_profile:
+        (tmp_path / own_profile).write_text(A_PROFILE_OF_THE_USERS_OWN)
+    bringup = launch(variables, cwd=tmp_path)
     lines = []
     threading.Thread(target=lambda: lines.extend(bringup.stdout), daemon=True).start()
     try:
-        simulator = wait_for(lambda: listening(SIMULATOR, bringup), what="the simulator listening")
+        simulator = threads_once_up(SIMULATOR, bringup, lines)
         started_with = given(SIMULATOR, bringup)
     finally:
         stopped(bringup)
-    # The range the launch itself was given, if any, and no profile.
-    as_given = {"ROS_AUTOMATIC_DISCOVERY_RANGE": discovery_range} if discovery_range else {}
-    assert started_with == as_given
-    assert with_shared_memory(simulator), simulator
-    assert (MULTICAST in simulator) == multicast, simulator
+    # One comparison, so that a failure says all three and not the first.
+    found = {
+        "started with": started_with,
+        "shared memory": bool(with_shared_memory(simulator)),
+        "a thread for multicast": MULTICAST in simulator,
+    }
+    as_ros_has_it = {
+        "started with": as_given,
+        "shared memory": True,
+        "a thread for multicast": False,
+    }
+    assert found == as_ros_has_it, simulator
 
 
 @pytest.mark.parametrize("profile", ["missing", "garbled"])
@@ -319,9 +482,9 @@ def test_the_simulator_speaks_udp_only_and_the_cameras_keep_shared_memory(graph)
     at most, and a variable ROS does not read says nothing at all. So this
     looks at the processes themselves.
     """
-    _, bringup, _ = graph
-    simulator = wait_for(lambda: listening(SIMULATOR, bringup), what="the simulator listening")
-    cameras = wait_for(lambda: listening(CAMERAS, bringup), what="the cameras listening")
+    _, bringup, lines = graph
+    simulator = threads_once_up(SIMULATOR, bringup, lines)
+    cameras = threads_once_up(CAMERAS, bringup, lines)
     assert given(SIMULATOR, bringup)["ROS_AUTOMATIC_DISCOVERY_RANGE"] == "SYSTEM_DEFAULT"
     assert given(CAMERAS, bringup) == {"ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"}
     assert not with_shared_memory(simulator), simulator
