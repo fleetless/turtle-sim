@@ -284,10 +284,15 @@ class Hub:
 MOST_ORIGINS_NAMED = 100
 """How many refused origins the log names. The ones after are refused without a line."""
 
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-_HOST_AND_PORT = r"(?P<host>\[[0-9A-Fa-f:.]+\]|[^\s/?#@:\[\]]+)(?::(?P<port>[0-9]{1,5}))?"
-_ORIGIN = re.compile(r"(?P<scheme>https?)://" + _HOST_AND_PORT, re.IGNORECASE)
-_HOST = re.compile(_HOST_AND_PORT)
+# ASCII and nothing else, in both patterns. A browser writes a scheme, a host
+# and a port in ASCII, a name with other letters in its `xn--` form. And a
+# pattern that ignores case the Unicode way takes U+017F, the long s, for the
+# `s` of `https`.
+_HOST_AND_PORT = (
+    r"(?P<host>\[[0-9A-Fa-f:.]+\]|[^\s/?#@:\[\]\x80-\U0010ffff]+)(?::(?P<port>[0-9]{1,5}))?"
+)
+_ORIGIN = re.compile(r"http(?P<secure>s)?://" + _HOST_AND_PORT, re.IGNORECASE | re.ASCII)
+_HOST = re.compile(_HOST_AND_PORT, re.ASCII)
 
 
 def names_this_view(origin: str, host: str | None) -> bool:
@@ -299,13 +304,16 @@ def names_this_view(origin: str, host: str | None) -> bool:
     scheme is not compared: a proxy may end TLS in front of the view. A side
     that names no port has the default one of the origin's scheme, which is
     what a browser leaves out on both sides. What is no `http` or `https`
-    origin (`null`, an empty header, anything with a path) names nothing.
+    origin (`null`, an empty header, anything with a path, anything that is
+    not ASCII) names nothing.
     """
     claimed = _ORIGIN.fullmatch(origin)
     asked = _HOST.fullmatch(host) if host is not None else None
     if claimed is None or asked is None:
         return False
-    default = _DEFAULT_PORTS[claimed["scheme"].lower()]
+    # Nothing below can fail on what a client wrote: the groups are the
+    # patterns' own, a host is ASCII, and a port is one to five digits.
+    default = 443 if claimed["secure"] else 80
     return (claimed["host"].lower(), int(claimed["port"] or default)) == (
         asked["host"].lower(),
         int(asked["port"] or default),

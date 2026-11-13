@@ -29,6 +29,9 @@ REFUSAL = (
     "The view's WebSocket answers its own page only, "
     'and this request names another origin: "{}".\n'
 )
+# U+017F, LATIN SMALL LETTER LONG S. Written as an escape: in a source file
+# it is hard to tell from an f.
+LONG_S = "\u017f"
 # What every handshake carries besides `Origin` and `Host`.
 HANDSHAKE = {
     "Connection": "Upgrade",
@@ -61,6 +64,10 @@ HANDSHAKE = {
         # A host name has no case, and neither has a scheme.
         ("http://LOCALHOST:8765", "localhost:8765"),
         ("HTTP://localhost:8765", "LocalHost:8765"),
+        ("HTTPS://Example.org", "example.org:443"),
+        ("Https://example.org", "example.org"),
+        # A name with other letters, as a browser writes it.
+        ("http://xn--mnchen-3ya.example:8765", "xn--mnchen-3ya.example:8765"),
     ],
 )
 def test_the_views_own_page_names_the_view(origin, host):
@@ -102,6 +109,17 @@ def test_the_views_own_page_names_the_view(origin, host):
         ("http://local\thost:8765", "localhost:8765"),
         ("http://localhost:8765 http://evil.example", "localhost:8765"),
         ("http://localhost:8765, http://evil.example", "localhost:8765"),
+        # A scheme is ASCII. U+017F, the long s, is an `s` only to who
+        # ignores case the Unicode way.
+        (f"http{LONG_S}://localhost:8765", "localhost:8765"),
+        (f"http{LONG_S}://localhost", "localhost:443"),
+        (f"HTTP{LONG_S}://localhost", "localhost"),
+        # So is a host. No browser sends one that is not, and to who lowers
+        # case the Unicode way U+212A, the kelvin sign, is a `k`.
+        ("http://m\u00fcnchen.example:8765", "m\u00fcnchen.example:8765"),
+        ("http://\u212a.example:8765", "k.example:8765"),
+        ("http://k.example:8765", "\u212a.example:8765"),
+        ("http://local\u00a0host:8765", "local\u00a0host:8765"),
         # Only a page served over HTTP is the view's.
         ("ftp://localhost:8765", "localhost:8765"),
         ("ws://localhost:8765", "localhost:8765"),
@@ -227,6 +245,50 @@ def test_an_origin_without_a_host_to_compare_it_with_is_refused(tmp_path):
     assert answer.endswith(REFUSAL.format("http://localhost:8765"))
 
 
+def test_an_origin_with_two_hosts_to_compare_it_with_is_refused(tmp_path):
+    # aiohttp's client sends one `Host`, whatever it is handed.
+    async def question(client):
+        reader, writer = await asyncio.open_connection(client.host, client.port)
+        writer.write(
+            b"GET /ws HTTP/1.1\r\n"
+            b"Host: localhost:8765\r\n"
+            b"Host: localhost:8765\r\n"
+            b"Origin: http://localhost:8765\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+        await writer.drain()
+        answer = await asyncio.wait_for(reader.read(), timeout=5.0)
+        writer.close()
+        return answer.decode()
+
+    answer = ask(tmp_path, question)
+    assert answer.startswith("HTTP/1.1 403 Forbidden\r\n")
+    assert answer.endswith(REFUSAL.format("http://localhost:8765"))
+
+
+def test_a_scheme_that_only_looks_like_https_is_refused_like_the_rest(tmp_path, capfd, caplog):
+    # It is no origin, so it gets the 403 and the one sentence. It is not
+    # for the server to answer 500 and write a stack trace per request.
+    origin = f"http{LONG_S}://localhost:8765"
+
+    async def question(client):
+        with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+            await first_frame(client, origin)
+        return refused.value.status, [
+            await refusal(client, headers(origin).items()) for _ in range(3)
+        ]
+
+    status, answers = ask(tmp_path, question)
+    assert status == 403
+    assert answers == [(403, "text/plain", REFUSAL.format("http\\u017f://localhost:8765"))] * 3
+    # aiohttp reports a handler that raised through `logging`, the view
+    # reports a refusal on stderr: nothing of the first, one line of the second.
+    assert [record.getMessage() for record in caplog.records] == []
+    said = warnings(capfd)
+    assert len(said) == 1
+    assert '"http\\u017f://localhost:8765"' in said[0] and "Traceback" not in said[0]
+
+
 def test_what_cannot_be_printed_is_escaped_and_what_is_long_is_cut(tmp_path):
     long = "http://" + "a" * 5000 + ".example"
     for origin, shown in [
@@ -324,6 +386,7 @@ def test_the_node_refuses_says_so_once_and_goes_on_serving():
     url = f"http://127.0.0.1:{PORT}"
     own = {"Host": f"localhost:{PORT}", "Origin": f"http://localhost:{PORT}"}
     foreign = {"Host": f"localhost:{PORT}", "Origin": "http://evil.example"}
+    long_s = {"Host": f"localhost:{PORT}", "Origin": f"http{LONG_S}://localhost:{PORT}"}
 
     async def browse():
         async with aiohttp.ClientSession() as session:
@@ -336,9 +399,9 @@ def test_the_node_refuses_says_so_once_and_goes_on_serving():
                 except aiohttp.ClientError:
                     assert time.monotonic() < deadline, "The view never answered."
                     await asyncio.sleep(0.1)
-            for _ in range(3):
+            for named in (foreign, foreign, foreign, long_s, long_s):
                 with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
-                    await session.ws_connect(url + "/ws", headers=foreign)
+                    await session.ws_connect(url + "/ws", headers=named)
                 assert refused.value.status == 403
             # The view goes on serving: its own page, and whoever names no origin.
             for named in (own, {}):
