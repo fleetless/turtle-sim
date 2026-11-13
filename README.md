@@ -390,6 +390,13 @@ Everything CI runs, in Docker, so the host needs Docker and nothing else:
 | `yaml` | the yaml against the schema of `@fleetless/contracts`, and the release script |
 | `image` | builds the image, runs its smoke test, and brings `docker-compose.yaml` up against it |
 
+## 🤝 Contributing
+
+Pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) says how to
+run the checks and what a change needs, and the
+[code of conduct](CODE_OF_CONDUCT.md) how we treat each other. A
+vulnerability goes by mail, not into an issue: [`SECURITY.md`](SECURITY.md).
+
 ## 📄 License
 
 Apache-2.0, see [`LICENSE`](LICENSE). [`NOTICE`](NOTICE) names what is
