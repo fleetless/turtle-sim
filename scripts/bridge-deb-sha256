@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Prints the SHA-256 of the .deb of one version of ros-jazzy-fleetless-bridge,
+# once two sources agree on it:
+#
+#   - SHA256SUMS of that version's GitHub release, which is where the
+#     Dockerfile takes the file from, and
+#   - the SHA256 field of that version in the Packages index of Fleetless's
+#     apt repository, the index bridge-apt-version reads.
+#
+# The Dockerfile pins the bridge by its version and by this sum, and the
+# bridge-bump workflow writes both. The sum decides which bytes get into the
+# image, so one source is not enough: a sum that is missing, malformed or
+# not the other source's exits 1 with one sentence that names both sources,
+# and prints nothing. There is no fallback.
+#
+# Both are read over HTTPS. The index is the one Fleetless signs; this
+# script does not check that signature.
+#
+# Usage: bridge-deb-sha256 <version> [<SHA256SUMS file> <Packages file>]
+#        (the two files are for tests; without them both are fetched)
+# Fetching needs curl and dpkg, as bridge-apt-version does.
+set -euo pipefail
+PKG=ros-jazzy-fleetless-bridge
+
+[ "$#" = 1 ] || [ "$#" = 3 ] || {
+    echo "usage: bridge-deb-sha256 <version> [<SHA256SUMS file> <Packages file>]" >&2
+    exit 2
+}
+version=$1
+# Debian's version alphabet only: the value becomes part of a URL and of a
+# file's name.
+case "$version" in
+    "" | *[!A-Za-z0-9.+~:-]*)
+        echo "bridge-deb-sha256: '$version' is not a Debian version." >&2
+        exit 1
+        ;;
+esac
+deb="${PKG}_${version}_all.deb"
+
+# Every refusal names what was compared with what.
+refuse() {
+    echo "bridge-deb-sha256: $1 (the release's $sums_from against apt's $index_from)." >&2
+    exit 1
+}
+is_a_sha256() { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+
+if [ "$#" = 3 ]; then
+    sums_from=$2
+    index_from=$3
+    sums="$(cat -- "$sums_from" 2> /dev/null)" || refuse "could not read $sums_from"
+    index="$(cat -- "$index_from" 2> /dev/null)" || refuse "could not read $index_from"
+else
+    command -v dpkg > /dev/null || {
+        echo "bridge-deb-sha256: dpkg is needed to name the architecture of apt's index." >&2
+        exit 1
+    }
+    # A release's tag is the version up to its last hyphen: 6.5.0-0noble is
+    # in v6.5.0.
+    sums_from="https://github.com/fleetless/bridge/releases/download/v${version%-*}/SHA256SUMS"
+    index_from="https://registry.fleetless.dev/apt/dists/jazzy/main/binary-$(dpkg --print-architecture)/Packages"
+    sums="$(curl -fsSL --max-time 20 "$sums_from")" || refuse "could not read $sums_from"
+    index="$(curl -fsSL --max-time 20 "$index_from")" || refuse "could not read $index_from"
+fi
+
+# The release: `<sum>  <name>`, as sha256sum writes it. A star before the
+# name marks a file read as binary and is no part of the name.
+from_release="$(awk -v name="$deb" '
+    NF == 2 { file = $2; sub(/^\*/, "", file); if (file == name) print $1 }
+' <<< "$sums")"
+case "$(grep -c . <<< "$from_release" || true)" in
+    0) refuse "SHA256SUMS has no line for $deb" ;;
+    1) ;;
+    *) refuse "SHA256SUMS has $(grep -c . <<< "$from_release") lines for $deb" ;;
+esac
+is_a_sha256 "$from_release" || refuse "SHA256SUMS gives '$from_release' for $deb, which is no SHA-256"
+
+# apt: a stanza is the lines up to an empty one. One line per stanza of this
+# package at this version: its SHA256 field, or a hyphen where it has none.
+from_apt="$(awk -v pkg="$PKG" -v want="$version" '
+    function stanza_ends() {
+        if (package == pkg && version == want) print (sha256 == "" ? "-" : sha256)
+        package = version = sha256 = ""
+    }
+    /^[ \t]*$/ { stanza_ends(); next }
+    /^Package:/ { package = $2 }
+    /^Version:/ { version = $2 }
+    /^SHA256:/ { sha256 = $2 }
+    END { stanza_ends() }
+' <<< "$index")"
+case "$(grep -c . <<< "$from_apt" || true)" in
+    0) refuse "the Packages index lists no $PKG $version" ;;
+    1) ;;
+    *) refuse "the Packages index lists $PKG $version $(grep -c . <<< "$from_apt") times" ;;
+esac
+[ "$from_apt" != - ] || refuse "the Packages index gives no SHA256 for $PKG $version"
+is_a_sha256 "$from_apt" \
+    || refuse "the Packages index gives '$from_apt' as the SHA256 of $PKG $version, which is no SHA-256"
+
+[ "$from_release" = "$from_apt" ] \
+    || refuse "the release and apt disagree on $deb: SHA256SUMS says $from_release, the Packages index says $from_apt"
+printf '%s\n' "$from_release"

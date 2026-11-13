@@ -1,11 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
-# The bridge in the image is pinned to one exact version, in the
-# Dockerfile's `ARG BRIDGE_VERSION=` line. Once a day this asks Fleetless's
-# apt repository which version it serves (scripts/bridge-apt-version). A
-# newer one becomes a pull request that changes that one line,
+# The bridge in the image is pinned twice in the Dockerfile: its version, in
+# the `ARG BRIDGE_VERSION=` line, and the SHA-256 of its .deb, in the
+# `ARG BRIDGE_DEB_SHA256=` line after it. The build takes the file from the
+# bridge's GitHub release and refuses one of another sum.
+#
+# This asks Fleetless's apt repository which version it serves
+# (scripts/bridge-apt-version): a bridge is in the image once it is promoted,
+# and apt is where a promoted bridge is. One that is only released is on
+# GitHub and is not followed. For a newer version the sum comes from the
+# release's SHA256SUMS and is held against the one apt's index gives for
+# that version (scripts/bridge-deb-sha256). If the two disagree, the run
+# fails and opens nothing. If they agree, a pull request moves both lines,
 # `fix(image): bridge <version>`. Its `verify` builds the image with the new
 # bridge and runs the smoke test. Nothing merges it but a person or an
 # agent: a bridge that needs more than a new pin gets it on that branch.
+#
+# It runs once a day, by hand, and when a promotion of a bridge says so
+# (`bridge-promoted`). What the dispatch carries is not read: whoever sends
+# one decides that this runs, and nothing of what it does.
 #
 # The pull request is opened as the organisation's App, not with
 # GITHUB_TOKEN: a pull request GITHUB_TOKEN opens starts no workflow, and
@@ -16,6 +28,8 @@ on:
   schedule:
     - cron: '23 5 * * *'
   workflow_dispatch:
+  repository_dispatch:
+    types: [bridge-promoted]
 
 concurrency:
   group: bridge-bump
@@ -42,6 +56,8 @@ jobs:
           set -euo pipefail
           [ "$(grep -c '^ARG BRIDGE_VERSION=' Dockerfile)" = 1 ] \
             || { echo "The Dockerfile must pin the bridge in exactly one 'ARG BRIDGE_VERSION=' line." >&2; exit 1; }
+          [ "$(grep -c '^ARG BRIDGE_DEB_SHA256=' Dockerfile)" = 1 ] \
+            || { echo "The Dockerfile must pin the bridge's .deb in exactly one 'ARG BRIDGE_DEB_SHA256=' line." >&2; exit 1; }
           pinned="$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)"
           served="$(scripts/bridge-apt-version)"
           # Debian's version alphabet, checked again here: the value goes
@@ -54,6 +70,21 @@ jobs:
             echo "newer=$newer"
           } >> "$GITHUB_OUTPUT"
           echo "apt serves $served, the Dockerfile pins $pinned"
+      # Two sources for the bytes the image will carry: the release the
+      # Dockerfile fetches from, and apt's index. The script fails with a
+      # sentence unless both give the same sum.
+      - name: the sum of its .deb, from the release and from apt
+        id: sum
+        if: ${{ steps.versions.outputs.newer == 'true' }}
+        env:
+          SERVED: ${{ steps.versions.outputs.served }}
+        run: |
+          set -euo pipefail
+          sha256="$(scripts/bridge-deb-sha256 "$SERVED")"
+          # Checked again here: the value goes into a sed expression.
+          [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || { echo "'$sha256' is not a SHA-256." >&2; exit 1; }
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "the release and apt agree: $sha256"
       # Asked for on every run, also when there is nothing to bump: a missing
       # App should be known before the day it is needed.
       - name: the App's secrets reach this repository
@@ -85,18 +116,25 @@ jobs:
         env:
           SERVED: ${{ steps.versions.outputs.served }}
           PINNED: ${{ steps.versions.outputs.pinned }}
+          SHA256: ${{ steps.sum.outputs.sha256 }}
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
+          # A version is never written without the sum of its file.
+          [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "No SHA-256 for $SERVED reached this step." >&2; exit 1; }
           # A Debian version may hold `~` and `:`; a git ref may not.
           branch="deps/bridge-$(printf '%s' "$SERVED" | tr '~:' '--')"
           if [ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[].number')" ]; then
             echo "a pull request for $branch is already open"; exit 0
           fi
           git switch -q -c "$branch"
-          sed -i -E "s|^ARG BRIDGE_VERSION=.*\$|ARG BRIDGE_VERSION=$SERVED|" Dockerfile
-          [ "$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)" = "$SERVED" ] \
-            || { echo "The Dockerfile's pin did not move to $SERVED." >&2; exit 1; }
+          sed -i -E \
+            -e "s|^ARG BRIDGE_VERSION=.*\$|ARG BRIDGE_VERSION=$SERVED|" \
+            -e "s|^ARG BRIDGE_DEB_SHA256=.*\$|ARG BRIDGE_DEB_SHA256=$SHA256|" Dockerfile
+          if [ "$(sed -n 's/^ARG BRIDGE_VERSION=//p' Dockerfile)" != "$SERVED" ] \
+            || [ "$(sed -n 's/^ARG BRIDGE_DEB_SHA256=//p' Dockerfile)" != "$SHA256" ]; then
+            echo "The Dockerfile's pin did not move to $SERVED and $SHA256." >&2; exit 1
+          fi
           git -c user.name="fleetless-release[bot]" -c user.email="fleetless-release[bot]@users.noreply.github.com" \
             commit -q -am "fix(image): bridge $SERVED"
           # The header through git's env-var config, not `-c` on the command
@@ -108,4 +146,4 @@ jobs:
             git push -q --force origin "HEAD:refs/heads/$branch"
           gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base main \
             --title "fix(image): bridge $SERVED" \
-            --body "apt serves \`ros-jazzy-fleetless-bridge\` $SERVED; the Dockerfile pinned $PINNED. This moves the pin, one line. \`verify\` builds the image with the new bridge and runs the smoke test. A bridge can need more than a new pin, so this is merged by hand, not by the workflow."
+            --body "apt serves \`ros-jazzy-fleetless-bridge\` $SERVED; the Dockerfile pinned $PINNED. This moves the pin, two lines: the version, and the SHA-256 of its \`.deb\`, $SHA256. That is the sum in \`SHA256SUMS\` of the bridge's release, and apt's index gives the same one for this version. \`verify\` builds the image with the new bridge and runs the smoke test. A bridge can need more than a new pin, so this is merged by hand, not by the workflow."
