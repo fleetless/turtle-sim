@@ -42,9 +42,16 @@ if [ -r "$started_at" ]; then
     }
     if [ "$(date +%s)" -lt "$young_until" ] && ! heard; then
         while ! heard && [ "$(date +%s)" -lt "$young_until" ]; do sleep 0.2; done
-        # A node's other endpoints arrive with its first one, give or take
-        # a few packets.
-        sleep 0.5
+        if heard; then
+            # A node's other endpoints arrive with its first one, give or
+            # take a few packets.
+            sleep 0.5
+        else
+            # The wait ran out: nodes that take longer than this to come up,
+            # or a start that was written and no turtle behind it. The
+            # question is still asked; whoever reads the answer is told.
+            echo "The turtle's nodes were not all heard within $YOUNG_FOR_S s of its start: this answer may lack some." >&2
+        fi
     fi
 fi
 

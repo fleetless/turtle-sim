@@ -6,10 +6,19 @@ one topic the node publishes or listens to. A node the launch file gains
 and the wrapper does not know of would be the one whose topics the first
 `ros2 topic list` lacks, now and then, on a machine with two cores. So the
 two lists are held against each other here.
+
+And the wrapper itself is run, in a copy whose three paths of the image
+point into a directory of the test: with a daemon that never hears the
+nodes, with one that hears them after a moment, and where nothing waits.
 """
 
+import os
 import re
+import subprocess
+import time
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 WRAPPER = ROOT / "docker" / "ros2"
@@ -69,3 +78,84 @@ def test_the_wrapper_waits_in_a_young_container_only():
     start = (ROOT / "docker" / "start.sh").read_text()
     command, turtle = start.index('exec "$@"'), start.index("date +%s > /tmp/turtle-started-at")
     assert command < turtle < start.index("exec python3 /opt/turtle/launcher.py")
+
+
+# --- The wrapper, run ----------------------------------------------------------
+
+RAN_OUT = (
+    "The turtle's nodes were not all heard within 30 s of its start: this answer may lack some."
+)
+NEVER = 1_000_000
+
+# In place of the daemon's port: no answer to the first DEAF_FOR questions,
+# then "one" to every question.
+CURL = """#!/bin/sh
+asked=$(($(cat "$ASKED" 2> /dev/null || echo 0) + 1))
+echo "$asked" > "$ASKED"
+[ "$asked" -gt "$DEAF_FOR" ] || exit 7
+echo '<methodResponse><params><param><value><int>1</int></value></param></params></methodResponse>'
+"""
+# In place of ros2: it says what it was asked and ends with a code of its own.
+ROS2 = """#!/bin/sh
+echo "the answer to $*"
+exit 3
+"""
+
+
+def run_a_copy(directory: Path, started_s_ago: int | None, deaf_for: int):
+    """`ros2 topic list` through the wrapper: what it said, and how often it asked the daemon."""
+    script = WRAPPER.read_text()
+    (directory / "environment.sh").write_text("")
+    for fixed, here in (
+        ("source /opt/turtle/environment.sh", f"source {directory}/environment.sh"),
+        ("started_at=/tmp/turtle-started-at", f"started_at={directory}/turtle-started-at"),
+        ('exec "/opt/ros/$ROS_DISTRO/bin/ros2" "$@"', f'exec "{directory}/bin/ros2-itself" "$@"'),
+    ):
+        assert script.count(fixed) == 1, fixed
+        script = script.replace(fixed, here)
+    (directory / "bin").mkdir()
+    for name, text in (("ros2", script), ("curl", CURL), ("ros2-itself", ROS2)):
+        (directory / "bin" / name).write_text(text)
+        (directory / "bin" / name).chmod(0o755)
+    if started_s_ago is not None:
+        (directory / "turtle-started-at").write_text(f"{int(time.time()) - started_s_ago}\n")
+    asked = directory / "asked"
+    ran = subprocess.run(
+        ["bash", str(directory / "bin" / "ros2"), "topic", "list"],
+        env={
+            **os.environ,
+            "PATH": f"{directory}/bin:{os.environ['PATH']}",
+            "ASKED": str(asked),
+            "DEAF_FOR": str(deaf_for),
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return ran, int(asked.read_text()) if asked.exists() else 0
+
+
+def test_a_wait_that_runs_out_says_so_and_still_gives_the_answer(tmp_path):
+    # Three seconds of its thirty are left, and the daemon never hears the nodes.
+    ran, asked = run_a_copy(tmp_path, started_s_ago=27, deaf_for=NEVER)
+    assert ran.stderr == RAN_OUT + "\n"
+    # ros2 was asked all the same: its answer, and its exit code.
+    assert ran.stdout == "the answer to topic list\n"
+    assert ran.returncode == 3
+    assert asked > 3
+
+
+def test_a_wait_that_ends_because_every_node_was_heard_says_nothing(tmp_path):
+    ran, asked = run_a_copy(tmp_path, started_s_ago=5, deaf_for=6)
+    assert (ran.stdout, ran.stderr, ran.returncode) == ("the answer to topic list\n", "", 3)
+    # Six questions without an answer, then one for each of the four nodes, twice:
+    # the round that ends the wait and the look at why it ended.
+    assert asked == 6 + 2 * 4
+
+
+@pytest.mark.parametrize("started_s_ago", [31, None], ids=["an old turtle", "no turtle"])
+def test_where_nothing_waits_the_daemon_is_not_asked_and_nothing_is_said(tmp_path, started_s_ago):
+    ran, asked = run_a_copy(tmp_path, started_s_ago, deaf_for=NEVER)
+    assert (ran.stdout, ran.stderr, ran.returncode) == ("the answer to topic list\n", "", 3)
+    assert asked == 0
