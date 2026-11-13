@@ -4,10 +4,14 @@
 #
 #   docker build -t turtle-sim .
 #
-# The bridge comes from Fleetless's apt repository, pinned to an exact
-# version. The bridge-bump workflow rewrites this one line when apt serves a
-# newer one.
+# The bridge is one file: the .deb of the bridge's GitHub release, pinned by
+# its version and by its SHA-256. Fleetless's apt repository serves the same
+# file, but only of the newest bridge, so a pin on an older one would stop
+# building the day a newer one is published. A release keeps its files. The
+# bridge-bump workflow rewrites these two lines when apt serves a newer
+# bridge.
 ARG BRIDGE_VERSION=6.5.0-0noble
+ARG BRIDGE_DEB_SHA256=0573a9545b432b3680266c07adc0aa6529f56644d49cf1bd3d41dc98b72734a6
 
 # --- What every stage needs: ROS, and what the packages' manifests name ------
 FROM ros:jazzy-ros-base AS base
@@ -42,20 +46,25 @@ RUN . "/opt/ros/$ROS_DISTRO/setup.sh" \
 # --- The image ------------------------------------------------------------------
 FROM base
 ARG BRIDGE_VERSION
+ARG BRIDGE_DEB_SHA256
 ARG VERSION=0.0.0
 ARG REVISION=unknown
 
-# The bridge, exactly as the docs' Getting Started installs it on a robot,
-# but at the pinned version.
-RUN apt-get update \
- && apt-get install -y curl gnupg ca-certificates \
- && curl -fsSL https://registry.fleetless.dev/apt/key.gpg \
-      | tee /usr/share/keyrings/fleetless.gpg > /dev/null \
- && echo "deb [signed-by=/usr/share/keyrings/fleetless.gpg] https://registry.fleetless.dev/apt $ROS_DISTRO main" \
-      | tee /etc/apt/sources.list.d/fleetless.list \
+# The bridge: the pinned file from the bridge's release, installed only if
+# its sum is the pinned one. The release's tag is the version up to its last
+# hyphen. apt installs the file and, from the sources the base image has,
+# what it depends on. A download that fails ends the build with curl's own
+# error; there is no second place to ask.
+RUN deb="ros-$ROS_DISTRO-fleetless-bridge_${BRIDGE_VERSION}_all.deb" \
+ && dir="$(mktemp -d)" \
  && apt-get update \
- && apt-get install -y "ros-$ROS_DISTRO-fleetless-bridge=${BRIDGE_VERSION}" \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y curl ca-certificates \
+ && curl -fsSL -o "$dir/$deb" \
+      "https://github.com/fleetless/bridge/releases/download/v${BRIDGE_VERSION%-*}/$deb" \
+ && { echo "$BRIDGE_DEB_SHA256  $dir/$deb" | sha256sum -c --strict --status - 2> /dev/null \
+      || { echo "The bridge's .deb is not the one this Dockerfile pins: expected $BRIDGE_DEB_SHA256, got $(sha256sum "$dir/$deb" | cut -d' ' -f1)." >&2; exit 1; }; } \
+ && apt-get install -y "$dir/$deb" \
+ && rm -rf "$dir" /var/lib/apt/lists/*
 
 # A user that is not root, and a place for what outlives the container: the
 # bridge keeps there which goal belongs to which job. The base image's own
@@ -98,7 +107,8 @@ LABEL org.opencontainers.image.title="turtle-sim" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
-      dev.fleetless.bridge.version="${BRIDGE_VERSION}"
+      dev.fleetless.bridge.version="${BRIDGE_VERSION}" \
+      dev.fleetless.bridge.deb.sha256="${BRIDGE_DEB_SHA256}"
 
 # `docker stop` sends this, the same signal as Ctrl-C. The entrypoint hears
 # it, and SIGTERM as well, from its first lines on, and has launch stop its
