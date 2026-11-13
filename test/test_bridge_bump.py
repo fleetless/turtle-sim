@@ -154,6 +154,17 @@ def test_the_line_of_another_version_is_not_this_one_s(tmp_path):
     assert f"no line for {deb('6.5.1-0noble')}" in refused(ran, tmp_path)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [f"dist/{deb('6.5.1-0noble')}", f"./{deb('6.5.1-0noble')}"],
+    ids=["below a directory", "below the current directory"],
+)
+def test_a_line_that_names_the_file_by_a_path_is_not_the_file_s_line(tmp_path, name):
+    """A release's sums name its files bare. The name is compared whole, never by its end."""
+    ran = sha256_of(tmp_path, "6.5.1-0noble", sums((A, name)), stanza("6.5.1-0noble", A))
+    assert f"no line for {deb('6.5.1-0noble')}" in refused(ran, tmp_path)
+
+
 def test_an_empty_sums_file_is_refused(tmp_path):
     ran = sha256_of(tmp_path, "6.5.1-0noble", "", stanza("6.5.1-0noble", A))
     assert f"no line for {deb('6.5.1-0noble')}" in refused(ran, tmp_path)
