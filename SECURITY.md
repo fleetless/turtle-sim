@@ -58,7 +58,9 @@ and none of them holds the turtle's state.
 **The residual, stated plainly:** that comparison trusts names. A page
 served under a host name and port that its owner then points at your machine
 (DNS rebinding) names the same host and port in both headers, and is served.
-What it gets is the state of a simulated turtle.
+And where `Host` names no port, the view takes the default port of the page's
+scheme: a page under the same host name on the other of 80 and 443 is served
+too. What either gets is the state of a simulated turtle.
 
 The page itself loads nothing from outside the container: three.js is
 vendored, and `test/test_page.py` holds the page to that.
