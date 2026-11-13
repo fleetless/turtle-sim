@@ -7,7 +7,7 @@
 # The bridge comes from Fleetless's apt repository, pinned to an exact
 # version. The bridge-bump workflow rewrites this one line when apt serves a
 # newer one.
-ARG BRIDGE_VERSION=6.4.0-0noble
+ARG BRIDGE_VERSION=6.5.0-0noble
 
 # --- What every stage needs: ROS, and what the packages' manifests name ------
 FROM ros:jazzy-ros-base AS base
