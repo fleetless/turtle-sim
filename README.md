@@ -349,6 +349,15 @@ within 4 m is `inf` in `/scan`, as REP 117 asks, and the bridge sends that as
 `null`. A range sensor that sees nothing reports its `max_range`, 4.0, a
 number, so a chart of `range_front` has no holes.
 
+**A new ROS client holds the world up.** When a node with a client of one of
+the turtle's services or actions joins, a `ros2 service call` or a
+`ros2 action send_goal` from a shell for one, the world can stand for 0.2 to
+0.35 s and then goes on from where it stood: nothing jumps. The simulator
+publishes from the thread that steps the world, and Fast DDS makes that
+publish wait while it opens the newcomer's shared-memory port. The bridge
+makes its clients once, when it connects or takes a new configuration, so a
+call through Fleetless brings no newcomer.
+
 ## 🔧 Testing an unreleased bridge
 
 Mount a checkout of the bridge at `/bridge-src`. The container copies it,
