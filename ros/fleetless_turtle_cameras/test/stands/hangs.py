@@ -16,7 +16,9 @@ stands, exit code 1, and no summary from pytest, which was not asked. With
 `-v` the line before the stacks names the test.
 
 The last test has no marker and takes the three minutes every test has.
-There is no other way to set a bound, so that nothing can switch it off.
+There is no other way to set a bound. pytest's own `faulthandler_timeout`
+would arm the same timer again without ending the run, and so switch the
+bound off: with it the run is refused before it starts, in one sentence.
 """
 
 import ctypes
