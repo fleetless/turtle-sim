@@ -416,22 +416,35 @@ def test_in_the_garden_the_two_pictures_show_the_same_world(garden):
 
 
 def test_ten_frames_a_second_of_both_stay_below_a_quarter_of_one_core(garden):
-    """Measured in processor time, so a busy machine does not change the answer.
+    """Measured in processor time, five times, and the fastest of the five counts.
 
-    A frame of both takes about 4 ms here, a tenth of what the bound allows:
+    Processor time leaves out the time this process waits for a core. It
+    still rises with the machine's load: the same forty frames once cost
+    26 ms each on a busy machine, and cost twice the usual with more busy
+    processes than cores. What the code costs is what it costs with nothing
+    in its way, and the fastest of five rounds is the nearest a test gets
+    to that.
+
+    A frame of both takes about 4 ms here, a sixth of what the bound allows:
     a quarter of a core at ten frames a second is 25 ms a frame.
     """
-    frames = 40
+    frames, rounds = 40, 5
     scenes = [
         Scene(garden.kinds, 12.8 + 0.05 * i, 12.8 - 0.03 * i, 0.07 * i) for i in range(frames)
     ]
     for scene in scenes[:3]:  # the world is drawn once; that is not a frame's cost
         top.render(scene), eye.render(scene)
-    started = time.process_time()
-    for scene in scenes:
-        top.render(scene), eye.render(scene)
-    per_frame = (time.process_time() - started) / frames
-    print(f"top and eye together: {per_frame * 1000:.1f} ms of processor time a frame")
+    measured = []
+    for _ in range(rounds):
+        started = time.process_time()
+        for scene in scenes:
+            top.render(scene), eye.render(scene)
+        measured.append((time.process_time() - started) / frames)
+    per_frame = min(measured)
+    print(
+        f"top and eye together: {per_frame * 1000:.1f} ms of processor time a frame, "
+        f"the fastest of {rounds} rounds ({', '.join(f'{m * 1000:.1f}' for m in measured)} ms)"
+    )
     assert per_frame < 0.25 / look.FRAME_RATE_HZ
 
 
