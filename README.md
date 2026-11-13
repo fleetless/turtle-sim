@@ -98,8 +98,8 @@ action `fetch_types`) and publish again.
   that side has walked, so turning on the spot walks one side backwards.
 - **Empty the battery.** Full speed does it in five minutes. Then the turtle
   crawls, `battery_empty` fires, and the way out is the charging pad in
-  square `A1`, one minute for a full charge. `dock` takes it there and waits
-  until it is charged. `-e TURTLE_BATTERY_DRAIN=10` gets you there sooner.
+  square `A1`, one minute for a full charge. `dock` takes it there, and the
+  pad does the rest. `-e TURTLE_BATTERY_DRAIN=10` gets you there sooner.
 - **Hit something.** `obstacle_ahead` fires when a wall is 0.3 m ahead,
   `bumper` goes true at it, `collisions` counts. The turtle does not slide
   along walls. It was not asked to.
@@ -136,7 +136,7 @@ Everything in [`fleetless/turtle.fleetless.yaml`](fleetless/turtle.fleetless.yam
 | `set_trail` | service | `record`: the trail of where the turtle has been, on, or off and cleared. |
 | `drive_to` | action | `cell_x`, `cell_y`, 0 to 255 each: drives to the centre of a cell. |
 | `drive_to_square` | action | `square`, `A1` to `P16`: drives into a square. |
-| `dock` | action | `target_percent`, 1 to 100: onto the charging pad, and waits there for the charge. |
+| `dock` | action | Onto the charging pad; ends when the turtle stands on it. |
 | `top` | camera | The map around the turtle, north up: 12 m × 12 m in 480 × 480 pixels, with the squares' names, the path, the target and the trail. 10 fps. |
 | `eye` | camera | What the turtle sees: 70° wide, from 0.1 m up, as far as 8 m. 320 × 240 pixels, 10 fps. |
 | the model | URDF | A shell, a head on a yaw joint and four legs on swing joints, at real size, with its meshes. The bridge finds it on `/robot_description`; the console stores it when you ask it to. |
@@ -154,8 +154,8 @@ across all three actions. No goal stays open.
 | `reason` | The goal ends | When |
 |---|---|---|
 | `reached` | succeeded | The turtle stands on the target. |
-| `charged` | succeeded | `dock`: the battery has reached `target_percent`. |
-| `out_of_range` | aborted | No such cell, square or charge. Fleetless refuses these before the turtle hears of them; a caller inside ROS gets this. |
+| `docked` | succeeded | `dock`: the turtle stands on the charging pad. |
+| `out_of_range` | aborted | No such cell or square. Fleetless refuses these before the turtle hears of them; a caller inside ROS gets this. |
 | `target_occupied` | aborted | The target is a wall, a rock or water, or the turtle does not fit beside one. |
 | `unreachable` | aborted | No path leads there, at the start or after a block landed on the only one. |
 | `stuck` | aborted | No progress for five seconds. The last resort. |
@@ -277,7 +277,7 @@ cell's two fields are `x` and `y`. In Fleetless they are `cell_x` and
 |---|---|---|
 | `/turtle/drive_to` | `fleetless_turtle_msgs/action/DriveTo` | `x`, `y` |
 | `/turtle/drive_to_square` | `fleetless_turtle_msgs/action/DriveToSquare` | `square` |
-| `/turtle/dock` | `fleetless_turtle_msgs/action/Dock` | `target_percent` |
+| `/turtle/dock` | `fleetless_turtle_msgs/action/Dock` | none |
 
 **Which file to read first**, if you are here to see how a ROS 2 robot is
 wired to Fleetless:
