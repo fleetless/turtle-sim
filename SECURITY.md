@@ -136,7 +136,7 @@ bridge's release and holds it against the `SHA256` that Fleetless's apt
 repository lists for the same version, the file apt installs on a robot. If
 the two differ it opens nothing. It reads both over HTTPS; the apt index is
 signed, and the workflow does not check that signature. The pull request it
-opens is merged by a person.
+opens is merged after `verify` and a review, never by the workflow.
 
 ### What is out of scope
 

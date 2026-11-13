@@ -375,12 +375,13 @@ The bridge in the image is pinned twice in the `Dockerfile`: one exact
 version, and the SHA-256 of its `.deb`. The build takes that file from the
 bridge's [GitHub release](https://github.com/fleetless/bridge/releases) and
 stops if its sum is another. It is the file Fleetless's apt repository
-serves for that version. apt keeps only the newest bridge and a release
-keeps its files, so an older commit of this repository still builds.
+served for that version. apt keeps only the newest bridge and a release
+keeps its files, so a pin on an older bridge still builds.
 
 A workflow asks apt which bridge it serves, once a day and when Fleetless
 publishes a new one there. If that is newer than the pin, it opens a pull
-request that moves both lines. A person merges it.
+request that moves both lines. It is merged after `verify` and a review,
+never by the workflow.
 
 ## ✅ Tests
 
