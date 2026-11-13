@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The simulator's own Fast DDS profile: UDP only, no shared memory.
+
+  With ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST, which the image sets, ROS
+  gives every process two transports, shared memory and UDP, and takes no
+  word from the environment about it. This file is that same setup without
+  the shared memory, for the one process the launch file names it to: one
+  UDP transport, no multicast, and the loopback as the one place to look
+  for the others. The launch file says why the simulator wants it, and
+  where it does not hand this file out: under another range, with peers
+  named in ROS_STATIC_PEERS, which this file cannot know, and with
+  ROS_LOCALHOST_ONLY=1.
+
+  As with LOCALHOST, this says whom the simulator looks for, not whom it
+  answers: its sockets are bound as every other node's are.
+
+  Whoever changes this: `test_bringup_join.py` holds that the simulator
+  runs without a shared-memory thread and without one for multicast, and
+  that the cameras keep their shared memory.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>udp</transport_id>
+        <type>UDPv4</type>
+        <!-- How many ROS processes of this host the simulator finds, as ROS sets it. -->
+        <maxInitialPeersRange>32</maxInitialPeersRange>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="simulator" is_default_profile="true">
+      <rtps>
+        <builtin>
+          <!-- A unicast address to be found at, so that none for multicast is made. -->
+          <metatrafficUnicastLocatorList>
+            <locator>
+              <udpv4/>
+            </locator>
+          </metatrafficUnicastLocatorList>
+          <initialPeersList>
+            <locator>
+              <udpv4>
+                <address>127.0.0.1</address>
+              </udpv4>
+            </locator>
+          </initialPeersList>
+        </builtin>
+        <userTransports>
+          <transport_id>udp</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

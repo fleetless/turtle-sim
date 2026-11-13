@@ -17,6 +17,7 @@ Everything a user may set comes from the environment, because that is what
 """
 
 import os
+from xml.etree import ElementTree
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -48,6 +49,65 @@ def model() -> str:
         return urdf.read()
 
 
+def without_shared_memory() -> dict[str, str]:
+    """The simulator's own environment: a Fast DDS that speaks UDP only.
+
+    When a node with a client of one of the turtle's services or actions
+    joins, Fast DDS opens the newcomer's shared-memory port under the lock
+    that every send of a process takes. Where it finds the port's listener
+    not yet seen alive, it sleeps there for a third of a second. The
+    simulator's one thread steps the world and publishes, and it waited for
+    that lock: the world stood, three times in thirty joins on one start
+    and sixteen times on another.
+
+    A process without the shared-memory transport opens no such port. What
+    the simulator sends is small beside a picture: the world and the map
+    are 65 kB each and go out when they change, a full trail is 144 kB,
+    once a second while it grows. UDP on the loopback carries that at no
+    cost that shows. The cameras keep shared memory: a picture is 691 kB,
+    and ten go out a second.
+
+    Where the discovery range is LOCALHOST, as the image sets it, ROS names
+    both transports itself, and FASTDDS_BUILTIN_TRANSPORTS is not asked. So
+    this one process is told to leave the range to Fast DDS, and a profile
+    says what LOCALHOST says, with the one transport.
+
+    Only where that is all ROS would have said. Under another range, which
+    somebody chose, the simulator is left as ROS has it. So it is with
+    peers named in ROS_STATIC_PEERS: ROS has every node look for them, and
+    the profile knows none. And with ROS_LOCALHOST_ONLY=1, the older way to
+    say LOCALHOST: ROS then passes over the range this process would be
+    given, and the shared memory would be back with the profile for show.
+
+    A profile that Fast DDS cannot read it passes over with one line, and
+    goes on with its defaults: shared memory, and multicast to whoever
+    shares the network. So the file is read here first, and a start
+    without it is no start.
+    """
+    said = os.environ.get
+    if (
+        said("ROS_AUTOMATIC_DISCOVERY_RANGE") != "LOCALHOST"
+        or said("ROS_STATIC_PEERS")
+        # ROS reads the first character: "1" and whatever begins with it.
+        or said("ROS_LOCALHOST_ONLY", "").startswith("1")
+    ):
+        return {}
+    profile = os.path.join(
+        get_package_share_directory("fleetless_turtle_bringup"), "config", "simulator.fastdds.xml"
+    )
+    try:
+        ElementTree.parse(profile)
+    except (OSError, ElementTree.ParseError) as error:
+        raise RuntimeError(
+            f"The simulator's Fast DDS profile cannot be read: {error}. Without it the "
+            "simulator would announce itself beyond this machine. The turtle does not start."
+        ) from None
+    return {
+        "ROS_AUTOMATIC_DISCOVERY_RANGE": "SYSTEM_DEFAULT",
+        "FASTRTPS_DEFAULT_PROFILES_FILE": profile,
+    }
+
+
 def needed(node: Node, what: str) -> RegisterEventHandler:
     """When this node ends by itself, everything ends, and `ros2 launch` exits non-zero."""
 
@@ -67,6 +127,7 @@ def generate_launch_description() -> LaunchDescription:
         package="fleetless_turtle_sim",
         executable="simulator",
         output="screen",
+        additional_env=without_shared_memory(),
         parameters=[
             {
                 "map": from_environment("TURTLE_MAP", "/opt/turtle/maps/garden.png"),
