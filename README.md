@@ -178,7 +178,7 @@ editing.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FLEETLESS_TOKEN` | — | The robot's token. Unset or empty: no bridge is started. |
+| `FLEETLESS_TOKEN` | — | The robot's token. Unset, empty or blank: no bridge is started. |
 | `FLEETLESS_CLOUD_URL` | the bridge's own default | Passed through to the bridge. |
 | `TURTLE_MAP` | `/opt/turtle/maps/garden.png` | The map file. |
 | `TURTLE_BATTERY_DRAIN` | `1.0` | Factor on the battery's discharge. `0` turns it off. Charging is not scaled. |
