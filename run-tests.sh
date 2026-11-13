@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Everything CI runs, in Docker, so nobody needs ROS, Python packages or Node
-# on the host.
+# Everything in Docker, so nobody needs ROS, Python packages or Node on the
+# host. In CI, verify also reads the commit messages, with Node on the runner.
 #
 #   ./run-tests.sh [lint|unit|ros|yaml|image|all]     (default: all)
 #

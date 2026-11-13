@@ -236,8 +236,10 @@ One container, one launch file, five processes:
 
 Nothing is special about any of them. The bridge sees the turtle through
 ROS topics, services and actions, as it would see any robot, and the view
-through its topics. DDS stays inside the container, so the graph is yours to
-look at, and to use:
+through its topics. DDS discovery is limited to the container: a container on
+the same Docker network and ROS domain still joins the graph if it names the
+turtle as a static peer, and a network of its own, as Compose gives it, keeps
+that out. The graph is yours to look at, and to use:
 
 ```sh
 docker exec -it turtle ros2 topic list
@@ -375,7 +377,9 @@ request when there is a newer one.
 
 ## ✅ Tests
 
-Everything CI runs, in Docker, so the host needs Docker and nothing else:
+`./run-tests.sh` runs everything in Docker, so the host needs Docker and
+nothing else; in CI, `verify` also reads the commit messages, with Node on the
+runner:
 
 ```sh
 ./run-tests.sh          # all of it

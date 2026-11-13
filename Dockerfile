@@ -78,8 +78,9 @@ COPY docker/ros2_daemon.py /opt/turtle/
 # `docker exec -it turtle ros2 topic list` finds this one first.
 COPY docker/ros2 /usr/local/bin/ros2
 
-# DDS stays inside: nothing on the host's network sees this ROS graph, and
-# this graph sees nothing out there.
+# Discovery stays inside: the nodes look for each other in this container and
+# nowhere else. A peer that names this container still joins the graph, and
+# SECURITY.md says who can.
 ENV ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST \
     FLEETLESS_STATE_DIR=/state/bridge
 
