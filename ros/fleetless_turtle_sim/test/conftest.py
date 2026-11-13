@@ -73,19 +73,7 @@ def pytest_runtest_protocol(item):
         yield
         return
 
-    marker = item.get_closest_marker("stands")
-    seconds = marker.args[0] if marker else BOUND_S
-    armed = f"{item.nodeid}: armed for {seconds} s"
-    if item.config.getoption("verbose") > 0:
-        print(armed, file=sys.stderr, flush=True)
-
-    # faulthandler writes stacks, not names. Whoever runs the suite may name a
-    # directory: the test this run is at stands there, in a file of the
-    # package's name, for as long as it runs. `docker/ros-tests.sh` does.
-    directory = os.environ.get("TURTLE_TEST_ARMED")
-    note = Path(directory, HERE.parent.name) if directory else None
-    if note:
-        note.write_text(armed + "\n")
+    seconds = bound_of(item)
 
     # Between two tests, file descriptor 2 is the real stderr. While one runs,
     # pytest points it at a file of its own, and nobody reads that file once
@@ -93,8 +81,48 @@ def pytest_runtest_protocol(item):
     stash = item.config.stash
     if REAL_STDERR not in stash:
         stash[REAL_STDERR] = os.dup(2)
-    faulthandler.dump_traceback_later(seconds, exit=True, file=stash[REAL_STDERR])
+    try:
+        faulthandler.dump_traceback_later(seconds, exit=True, file=stash[REAL_STDERR])
+    except (TypeError, ValueError, OverflowError):
+        raise refusal(item) from None
+
+    # faulthandler writes stacks, not names. Whoever runs the suite may name a
+    # directory: the test this run is at stands there, in a file of the
+    # package's name, for as long as it runs. `docker/ros-tests.sh` does.
+    # Said and noted once the timer is armed, never for a test that was not.
+    armed = f"{item.nodeid}: armed for {seconds} s"
+    if item.config.getoption("verbose") > 0:
+        print(armed, file=sys.stderr, flush=True)
+    directory = os.environ.get("TURTLE_TEST_ARMED")
+    note = Path(directory, HERE.parent.name) if directory else None
+    if note:
+        note.write_text(armed + "\n")
     yield
     faulthandler.cancel_dump_traceback_later()
     if note:
         note.unlink()
+
+
+def bound_of(item):
+    """What the test's `stands` marker says, or the usual bound.
+
+    A test carries the marker once, with one number. Anything else is refused
+    here, and a number faulthandler cannot wait for where it is armed: both
+    by the test's name. Left alone, either ends the run as an internal error
+    of pytest's, which says less; and of two markers the nearer one would
+    win without a word.
+    """
+    markers = list(item.iter_markers("stands"))
+    if not markers:
+        return BOUND_S
+    said = markers[0]
+    if len(markers) > 1 or len(said.args) != 1 or said.kwargs or isinstance(said.args[0], bool):
+        raise refusal(item)
+    return said.args[0]
+
+
+def refusal(item) -> pytest.UsageError:
+    return pytest.UsageError(
+        f"{item.nodeid}: `stands` takes one positive number of seconds, and a test carries it "
+        "once, as in @pytest.mark.stands(300)."
+    )
