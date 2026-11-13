@@ -42,8 +42,12 @@ def test_the_wrapper_knows_one_topic_of_every_node_the_launch_file_starts():
     published, listened_to = listed("PUBLISHED", WRAPPER), listed("LISTENED_TO", WRAPPER)
     # The simulator, the view, the cameras and the model's publisher. The
     # bridge is the bridge's own launch file and comes with a token only.
-    nodes = re.findall(r"\b(\w+) = Node\(", LAUNCH.read_text())
+    launch = LAUNCH.read_text()
+    nodes = re.findall(r"\b(\w+) = Node\(", launch)
     assert nodes == ["simulator", "viewer", "cameras", "model_publisher"]
+    # And these four are every node it starts: one written straight into the
+    # list, or of another kind of node, has no name here and is counted.
+    assert len(re.findall(r"\w*Node\w*\(", launch)) == len(nodes)
     assert len(published) + len(listened_to) == len(nodes)
 
     # Each topic is a thing of the node it stands for.
