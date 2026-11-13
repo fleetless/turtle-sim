@@ -11,7 +11,10 @@ torn down: when it takes longer than its bound, Python's faulthandler writes
 where every thread stands and ends the run with exit code 1. Its own thread
 needs no lock, so it also ends a test that waits in a ROS call which keeps
 Python's; a thread or a signal handler written in Python could not.
-`@pytest.mark.stands(seconds)` gives one test another bound.
+`@pytest.mark.stands(seconds)` gives one test another bound, and nothing
+else does. pytest's own `faulthandler_timeout` would arm the same timer once
+more for every test, without ending the run, and so switch the bound off: a
+run that sets it is refused.
 
 The other packages' tests have the same lines. A package's tests are not
 installed, so each package keeps its own.
@@ -40,6 +43,16 @@ REAL_STDERR = pytest.StashKey[int]()
 
 
 def pytest_configure(config):
+    try:
+        theirs = float(config.getini("faulthandler_timeout") or 0)
+    except ValueError:
+        theirs = 0  # pytest's faulthandler plugin is switched off, and its option with it
+    if theirs > 0:
+        raise pytest.UsageError(
+            "faulthandler_timeout is set, and these tests refuse it: pytest would arm "
+            "faulthandler's one timer again for every test, without ending the run, and a test "
+            f"that hangs would stand for ever instead of being ended by the bound of {__file__}."
+        )
     config.addinivalue_line(
         "markers", f"stands(seconds): this test's bound, where {BOUND_S} s are not enough"
     )
