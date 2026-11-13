@@ -63,6 +63,9 @@ def stamp(message) -> float:
     return message.header.stamp.sec + message.header.stamp.nanosec / 1e9
 
 
+# One test to pytest, and the suite's longest: 138 s, most of them the turtle
+# driving. Three times that, where the others have 180 s (conftest.py).
+@pytest.mark.stands(420)
 @pytest.mark.launch_test
 def generate_test_description():
     simulator = launch_ros.actions.Node(
