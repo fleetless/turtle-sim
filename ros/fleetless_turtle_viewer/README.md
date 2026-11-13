@@ -20,6 +20,30 @@ shows: nothing a browser sends changes anything.
 | `port` | `8765` | The port to listen on. In use, or not a port: one sentence, exit 2. |
 | `config` | `/opt/turtle/fleetless/turtle.fleetless.yaml` | The file behind `/fleetless.yaml`. |
 
+## Who may connect
+
+`/ws` answers the view's own page, and whoever is no browser.
+
+A browser names the page that opens a WebSocket in the `Origin` header, and
+a page cannot change it. The view compares that header with `Host`, the
+place the request was sent to:
+
+- **The same host and port: served.** That is the view's own page, on
+  whatever port Docker maps the view to.
+- **No `Origin`: served.** A script, `curl`, a test.
+- **Anything else: `403` and one sentence**, as plain text. Another host,
+  another port, `null`, an empty header, two of them, or an `Origin` without
+  a `Host` to compare it with. The log names each such origin once, the
+  first hundred of them.
+
+The scheme is not compared, so a proxy may end TLS in front of the view. A
+port left out is the default one of the origin's scheme, 80 or 443. The
+proxy has to pass `Host` on as the browser sent it: one that puts its own
+target there gets the view's own page refused.
+
+The other routes answer everybody. A browser keeps another site from
+reading them, and none of them holds the turtle's state.
+
 ## The WebSocket protocol
 
 JSON text frames, server to page only. Whatever the page sends is read and
