@@ -91,12 +91,14 @@ turtle's own code writes nothing there, and it holds no token.
 
 ### The ROS graph
 
-The image sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`: the nodes look for
-each other inside the container and nowhere else. Docker publishes none of
-DDS's ports: they are not on your machine's own address.
+The image sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, and the launch file
+gives the simulator a Fast DDS profile that says the same without shared
+memory: the nodes look for each other inside the container and nowhere else.
+Docker publishes none of DDS's ports: they are not on your machine's own
+address.
 
-**The residual, stated plainly:** that setting limits whom the nodes look
-for, not whom they answer. DDS's sockets are bound on the container's own
+**The residual, stated plainly:** that limits whom the nodes look for, not
+whom they answer. DDS's sockets are bound on the container's own
 network address too. A process that can send to that address and names the
 container as a static peer (`ROS_STATIC_PEERS`) joins the graph, and whoever
 is on the graph can drive the turtle. That is a process on the Docker host,

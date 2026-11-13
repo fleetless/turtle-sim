@@ -88,8 +88,9 @@ COPY docker/ros2_daemon.py /opt/turtle/
 COPY docker/ros2 /usr/local/bin/ros2
 
 # Discovery stays inside: the nodes look for each other in this container and
-# nowhere else. A peer that names this container still joins the graph, and
-# SECURITY.md says who can.
+# nowhere else. The launch file reads this as well: under LOCALHOST it gives
+# the simulator a Fast DDS profile of its own that says the same. A peer that
+# names this container still joins the graph, and SECURITY.md says who can.
 ENV ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST \
     FLEETLESS_STATE_DIR=/state/bridge
 
