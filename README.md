@@ -402,10 +402,13 @@ runner:
 | `yaml` | the yaml against the schema of `@fleetless/contracts`, and the release script |
 | `image` | builds the image, runs its smoke test, and brings `docker-compose.yaml` up against it |
 
-A test of the ROS packages that does not end is ended after three minutes:
-every thread's stack goes to the log, the stage fails, and its last line
-names the test. One that honestly needs longer says so with
-`@pytest.mark.stands(seconds)`.
+A test of the simulator, the cameras, the view or the bring-up that does not
+end is ended after three minutes: every thread's stack goes to the log, and
+the stage fails. In the `ros` stage its last line then names the test. The
+`unit` stage runs the simulator's core and the cameras' renderers under the
+same bound, and there nothing names the test but the stacks. The messages'
+and the description's tests have no such bound. A test that honestly needs
+longer says so with `@pytest.mark.stands(seconds)`.
 
 ## 🤝 Contributing
 
