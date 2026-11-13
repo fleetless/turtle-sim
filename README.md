@@ -364,9 +364,9 @@ builds it and runs it in place of the installed package:
 docker run --rm -it --name turtle -p 127.0.0.1:8765:8765 -v turtle-state:/state -v /path/to/bridge:/bridge-src:ro -e FLEETLESS_TOKEN=frt_... ghcr.io/fleetless/turtle-sim
 ```
 
-The log names both, `building the bridge from /bridge-src. It replaces the
-installed ros-jazzy-fleetless-bridge 6.2.3-0noble.` A build that fails ends
-the container; the installed bridge is not started in its place. For a cloud
+The log says `building the bridge from /bridge-src` and names the installed
+package and version it replaces. A build that fails ends the container; the
+installed bridge is not started in its place. For a cloud
 other than the default, add `-e FLEETLESS_CLOUD_URL=wss://…/bridge`.
 
 The bridge in the image is pinned to one exact version in the `Dockerfile`.
