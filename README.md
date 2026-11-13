@@ -264,7 +264,7 @@ cell's two fields are `x` and `y`. In Fleetless they are `cell_x` and
 | `/turtle/world` | `fleetless_turtle_msgs/msg/World` | latched |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | latched |
 | `/turtle/plan` | `nav_msgs/msg/Path` | latched: the path of the running goal, empty without one |
-| `/turtle/trail` | `nav_msgs/msg/Path` | latched, at most 1 Hz: the trail, empty while off |
+| `/turtle/trail` | `nav_msgs/msg/Path` | latched, at most 1 Hz as it grows, at once when `reset` or `set_trail` emptied or switched it: the trail, empty while off |
 | `/joint_states` | `sensor_msgs/msg/JointState` | 20 Hz |
 | `/robot_description` | `std_msgs/msg/String` | latched |
 | `/turtle/camera/top/image_raw`, `/turtle/camera/eye/image_raw` | `sensor_msgs/msg/Image`, `rgb8` | 10 Hz |

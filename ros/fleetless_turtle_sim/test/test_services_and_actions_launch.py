@@ -322,6 +322,53 @@ class TestServicesAndActions(unittest.TestCase):
         with_a_trail_just_published()
         told_before_the_answer(lambda: self.probe.call(Trigger, "/turtle/reset"), poses=0)
 
+    def test_13c_a_service_that_left_the_trail_alone_does_not_send_it_out_early(self):
+        """The trail's growth keeps to once a second, whatever is called meanwhile.
+
+        Every service publishes what it changed before it answers. A rock put
+        down and taken away far off, five times a second while the turtle
+        drives with the trail on, changes a cell and nothing about the trail,
+        and the trail gains a point between any two such calls. It still
+        comes once a second, not with every answer.
+        """
+        self.teleport(LANE_START)
+        self.assertTrue(self.probe.call(SetBool, "/turtle/set_trail", data=True).success)
+        Probe.newest(self.trail, lambda t: len(t.poses) == 1, 5.0, "/turtle/trail")
+        switched_on = len(self.trail) - 1  # the one message a service does send at once
+
+        far = PLACES["far"]
+        forward = Twist()
+        forward.linear.x = 0.5
+        calls, ticks, began = 0, 0, time.monotonic()
+        while time.monotonic() - began < 6.0:
+            self.cmd_vel.publish(forward)
+            if ticks % 4 == 0:  # every fifth of a second
+                answer = self.probe.call(
+                    SetBlock, "/turtle/set_block", x=far[0], y=far[1], occupied=calls % 2 == 0
+                )
+                self.assertTrue(answer.success, answer.message)
+                calls += 1
+            ticks += 1
+            time.sleep(max(0.0, began + ticks * 0.05 - time.monotonic()))
+        # Three calls a second at the least, or this test did not do what it says.
+        self.assertGreater(calls, 18)
+
+        heard = [message for _, message in self.trail[switched_on:]]
+        # There was growth to send early: about five points a second at this speed.
+        self.assertGreater(len(heard[-1].poses), 20)
+        # About once a second, by the node's own stamps. Not under 0.99 s: the
+        # node waits a full second on its monotonic clock and stamps the
+        # message a moment later from the ROS clock, and a hundredth is for
+        # the two clocks. Not over 1.5 s: a point is due every fifth of a
+        # second, so the trail has grown whenever its second is over, and half
+        # a second is for a machine that is busy.
+        gaps = [later - earlier for earlier, later in itertools.pairwise(map(stamp, heard))]
+        print(f"test_13c: {calls} calls of set_block; the trail's messages, seconds apart: {gaps}")
+        self.assertGreaterEqual(len(gaps), 4, gaps)
+        for gap in gaps:
+            self.assertGreater(gap, 0.99, gaps)
+            self.assertLess(gap, 1.5, gaps)
+
     # --- Actions --------------------------------------------------------------
 
     def test_20_a_drive_to_a_cell_is_reached_with_feedback_and_a_path(self):

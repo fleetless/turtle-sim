@@ -94,7 +94,8 @@ the turtle, and a pin on the target.
 
 ### `trail`
 
-Sent on connect and whenever `/turtle/trail` changes, at most once a second.
+Sent on connect and whenever `/turtle/trail` changes: at most once a second
+as the trail grows, at once when `reset` or `set_trail` emptied or switched it.
 
 ```json
 {"type": "trail", "points": [[0.85, 0.85], [0.95, 0.85], [1.05, 0.86]]}

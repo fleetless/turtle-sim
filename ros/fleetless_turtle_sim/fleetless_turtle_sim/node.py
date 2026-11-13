@@ -123,6 +123,7 @@ class SimulatorNode(Node):
         self._published_world_version = None
         self._published_plan_version = None
         self._published_trail_version = None
+        self._published_trail_number = None
         self._trail_published_at = -math.inf
         # The goals whose callers still wait for a result.
         self._running: list[_Running] = []
@@ -266,7 +267,7 @@ class SimulatorNode(Node):
     def _answered(self, response):
         """What a service changed is out before its answer is: a goal ended, a cell, a path."""
         self._settle()
-        self._publish_what_changed(by_a_service=True)
+        self._publish_what_changed()
         return response
 
     # --- Actions --------------------------------------------------------------
@@ -442,17 +443,20 @@ class SimulatorNode(Node):
         joints.position = list(positions.values())
         self._joints.publish(joints)
 
-    def _publish_what_changed(self, by_a_service: bool = False) -> None:
+    def _publish_what_changed(self) -> None:
         """The latched topics: the world and the path on change, the trail as it grows.
 
-        The trail grows a point every tenth of a metre and is published at
-        most once a second. What a service did to it does not wait for that
-        second: a trail that was emptied or switched on is out at once.
+        The trail grows a point every tenth of a metre, and its growth is
+        published at most once a second, whoever asks: a service that did
+        nothing to the trail does not send it out early. A trail that was
+        emptied or switched, by `reset` or `set_trail`, is a new trail and
+        does not wait for that second: it is out before the service answers.
         """
         with self._lock:
             world = self._sim.world_version != self._published_world_version
             plan = self._sim.plan_version != self._published_plan_version
             trail = self._sim.trail_version != self._published_trail_version
+            a_new_trail = self._sim.trail_number != self._published_trail_number
         if world:
             self._publish_world()
         if plan:
@@ -461,10 +465,11 @@ class SimulatorNode(Node):
                 self._published_plan_version = self._sim.plan_version
             self._plan.publish(self._path(points))
         due = time.monotonic() - self._trail_published_at >= 1.0 / c.TRAIL_RATE_HZ
-        if trail and (by_a_service or due):
+        if trail and (a_new_trail or due):
             with self._lock:
                 points = tuple(self._sim.trail)
                 self._published_trail_version = self._sim.trail_version
+                self._published_trail_number = self._sim.trail_number
             self._trail_published_at = time.monotonic()
             self._trail.publish(self._path(points))
 

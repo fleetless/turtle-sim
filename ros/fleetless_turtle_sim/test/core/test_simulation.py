@@ -447,6 +447,31 @@ def test_switching_the_trail_off_clears_it(sim):
     assert sim.trail == []
 
 
+def test_a_new_trail_begins_only_when_it_is_emptied_or_switched(sim):
+    """`trail_number` is what the node publishes at once. Growth is the same trail."""
+    number = sim.trail_number
+    sim.reset()  # nothing to empty, nothing to switch
+    assert sim.set_trail(False)[0]
+    assert sim.trail_number == number
+
+    sim.set_trail(True)  # switched on
+    assert sim.trail_number == number + 1
+    version = sim.trail_version
+    run(sim, 2.0, linear=0.5)
+    assert sim.trail_version > version  # it grew,
+    sim.set_trail(True)  # was asked for again,
+    assert sim.set_block(100, 100, occupied=True)[0]
+    assert sim.teleport(60, 60, 0.0)[0]  # and other services were called:
+    assert sim.trail_number == number + 1  # the same trail
+
+    sim.set_trail(False)  # switched off and emptied
+    assert sim.trail_number == number + 2
+    sim.set_trail(True)
+    run(sim, 2.0, linear=0.5)
+    sim.reset()  # emptied and switched off
+    assert sim.trail_number == number + 4
+
+
 def test_the_trail_keeps_the_newest_2000_points(world):
     sim = Simulation(world, battery_drain=0.0)
     assert sim.teleport(20, 100, 0.0)[0]
