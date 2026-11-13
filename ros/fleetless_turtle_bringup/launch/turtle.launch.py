@@ -19,7 +19,11 @@ Everything a user may set comes from the environment, because that is what
 import os
 from xml.etree import ElementTree
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (
+    PackageNotFoundError,
+    get_package_prefix,
+    get_package_share_directory,
+)
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, LogInfo, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
@@ -49,6 +53,35 @@ def model() -> str:
         return urdf.read()
 
 
+FAST_DDS = ("rmw_fastrtps_cpp", "rmw_fastrtps_dynamic_cpp")
+"""ROS's two middlewares on Fast DDS. Only they read the profile."""
+
+OWN_PROFILE = "DEFAULT_FASTRTPS_PROFILES.xml"
+"""The file Fast DDS reads from the working directory, whatever else it was given."""
+
+
+def fast_dds_is_the_middleware() -> bool:
+    """Whether the simulator's process will load Fast DDS, as ROS decides it.
+
+    A middleware named in RMW_IMPLEMENTATION is the one ROS loads, and no
+    other. Where none is named, or an empty one, ROS loads rmw_fastrtps_cpp
+    if it is installed, as in the image, and otherwise whichever it finds.
+    """
+    named = os.environ.get("RMW_IMPLEMENTATION")
+    if named:
+        return named in FAST_DDS
+    try:
+        get_package_prefix(FAST_DDS[0])
+    except PackageNotFoundError:
+        return False
+    return True
+
+
+def a_profile_of_the_users_own() -> bool:
+    """Whether Fast DDS has a profile already: one named, or one in the working directory."""
+    return bool(os.environ.get("FASTRTPS_DEFAULT_PROFILES_FILE")) or os.path.exists(OWN_PROFILE)
+
+
 def without_shared_memory() -> dict[str, str]:
     """The simulator's own environment: a Fast DDS that speaks UDP only.
 
@@ -69,18 +102,30 @@ def without_shared_memory() -> dict[str, str]:
 
     Where the discovery range is LOCALHOST, as the image sets it, ROS names
     both transports itself, and FASTDDS_BUILTIN_TRANSPORTS is not asked. So
-    this one process is told to leave the range to Fast DDS, and a profile
-    says what LOCALHOST says, with the one transport.
+    this one process is told to leave the range to its middleware, and a
+    Fast DDS profile says what LOCALHOST says, with the one transport.
 
-    Only where that is all ROS would have said. Under another range, which
-    somebody chose, the simulator is left as ROS has it. So it is with
-    peers named in ROS_STATIC_PEERS: ROS has every node look for them, and
-    the profile knows none. And with ROS_LOCALHOST_ONLY=1, the older way to
-    say LOCALHOST: ROS then passes over the range this process would be
-    given, and the shared memory would be back with the profile for show.
+    That is safe only where the profile is what the process then goes by.
+    A middleware left to itself announces a node to whoever shares the
+    network. So the simulator is left as ROS has it, shared memory and
+    all, wherever one of these holds:
 
-    A profile that Fast DDS cannot read it passes over with one line, and
-    goes on with its defaults: shared memory, and multicast to whoever
+    - Another range than LOCALHOST. Somebody chose it.
+    - Peers named in ROS_STATIC_PEERS. ROS has every node look for them,
+      and the profile knows none.
+    - ROS_LOCALHOST_ONLY=1, the older way to say LOCALHOST. ROS then
+      passes over the range this process would be given, and the shared
+      memory would be back with the profile for show.
+    - Another middleware than Fast DDS. It reads no Fast DDS profile, and
+      without the range it has only its own defaults.
+    - A Fast DDS profile of the user's own, named in
+      FASTRTPS_DEFAULT_PROFILES_FILE or standing in the working directory
+      as DEFAULT_FASTRTPS_PROFILES.xml. The variable would be replaced, and
+      the file is read after this one and wins: either way the simulator
+      would go by a profile that was written for a process under LOCALHOST.
+
+    And a profile that Fast DDS cannot read it passes over with one line,
+    and goes on with its defaults: shared memory, and multicast to whoever
     shares the network. So the file is read here first, and a start
     without it is no start.
     """
@@ -90,6 +135,8 @@ def without_shared_memory() -> dict[str, str]:
         or said("ROS_STATIC_PEERS")
         # ROS reads the first character: "1" and whatever begins with it.
         or said("ROS_LOCALHOST_ONLY", "").startswith("1")
+        or not fast_dds_is_the_middleware()
+        or a_profile_of_the_users_own()
     ):
         return {}
     profile = os.path.join(
