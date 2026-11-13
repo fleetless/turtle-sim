@@ -147,9 +147,9 @@ class Simulation:
         """Drive into a square: to the traversable cell nearest to its centre."""
         return self._accept(DriveToSquare(self, square))
 
-    def dock(self, target_percent: float) -> Goal:
-        """Drive onto the charging pad and wait until the battery is at `target_percent`."""
-        return self._accept(Dock(self, target_percent))
+    def dock(self) -> Goal:
+        """Drive onto the charging pad. The goal ends when the turtle stands on it."""
+        return self._accept(Dock(self))
 
     def _accept(self, goal: Goal) -> Goal:
         # One navigator. Every goal is accepted, and a newly accepted one

@@ -74,7 +74,6 @@ INTERFACES = {
     "action/DriveTo": ["int32 x", "int32 y", *DRIVE_RESULT_AND_FEEDBACK],
     "action/DriveToSquare": ["string square", *DRIVE_RESULT_AND_FEEDBACK],
     "action/Dock": [
-        "float32 target_percent",
         "---",
         "bool success",
         "string reason",

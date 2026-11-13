@@ -166,10 +166,6 @@ stops. The book alone would have it creep up to the point for ever."""
 GOAL_FEEDBACK_RATE_HZ = 2.0
 """How often a running goal reports."""
 
-DOCK_TARGET_MIN_PERCENT = 1.0
-DOCK_TARGET_MAX_PERCENT = 100.0
-"""What a dock goal may name as the charge to wait for."""
-
 # --- The trail --------------------------------------------------------------
 
 TRAIL_SPACING_M = 0.1

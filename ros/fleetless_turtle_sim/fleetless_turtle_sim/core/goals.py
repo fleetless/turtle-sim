@@ -7,8 +7,8 @@ closed list, `message` one sentence that names the cell or the square.
 There is no other way a goal ends, and none by which it does not.
 
     reached           the turtle stands on the target
-    charged           dock: the battery has reached the target
-    out_of_range      the goal names no cell, no square, no charge
+    docked            dock: the turtle stands on the charging pad
+    out_of_range      the goal names no cell, no square
     target_occupied   the target blocks, or the turtle does not fit on it
     unreachable       no path leads there
     stuck             the turtle got nowhere for five seconds
@@ -24,12 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import (
-    DOCK_TARGET_MAX_PERCENT,
-    DOCK_TARGET_MIN_PERCENT,
-    GRID_CELLS,
-    STUCK_WINDOW_S,
-)
+from .constants import GRID_CELLS, STUCK_WINDOW_S
 from .navigation import Cell, Navigator, Point, nearest_traversable, traversable_cells
 from .world import (
     FIRST_SQUARE,
@@ -42,7 +37,7 @@ from .world import (
 
 REASONS = (
     "reached",
-    "charged",
+    "docked",
     "out_of_range",
     "target_occupied",
     "unreachable",
@@ -55,7 +50,7 @@ REASONS = (
 )
 """The closed list. A result's `reason` is one of these."""
 
-SUCCEEDED = ("reached", "charged")
+SUCCEEDED = ("reached", "docked")
 """The reasons a goal succeeds with. `canceled` is cancelled, every other one aborted."""
 
 
@@ -333,28 +328,18 @@ class DriveToSquare(_Drive):
 
 
 class Dock(Goal):
-    """To the start cell on the charging pad, then wait until the battery is at the target."""
+    """To the start cell on the charging pad. There the battery charges, with or without a goal."""
 
     kind = "dock"
 
-    def __init__(self, sim, target_percent: float):
-        super().__init__(sim)
-        self._target_percent = target_percent
-        self._charging = False
-
     def feedback(self) -> DockFeedback:
         return DockFeedback(
-            phase="charging" if self._charging else "driving",
+            phase="planning" if self._navigator is None else self._navigator.phase,
             battery_percent=self._sim.battery.percent,
-            remaining_m=0.0 if self._charging else self._remaining(self._sim.world.start_cell),
+            remaining_m=self._remaining(self._sim.world.start_cell),
         )
 
     def _refusal(self) -> tuple[str, str] | None:
-        low, high = DOCK_TARGET_MIN_PERCENT, DOCK_TARGET_MAX_PERCENT
-        if not low <= self._target_percent <= high:  # which a value that is no number is not
-            return "out_of_range", (
-                f"A target charge of {self._target_percent:g} % is outside {low:g} to {high:g}."
-            )
         if not self._sim.world.traversable(*self._sim.world.start_cell):
             return "target_occupied", self._sentence("target_occupied")
         return None
@@ -364,16 +349,11 @@ class Dock(Goal):
         return (x, y) if passable[y, x] else None
 
     def _advance(self) -> tuple[float, float]:
-        command = (0.0, 0.0)
-        if not self._charging:
-            command = self._navigator.control(self._sim.drive, self._sim.step_s)
-            if self._navigator.outcome == "reached":
-                self._charging = True
-            elif self._navigator.outcome is not None:
-                self.end(self._navigator.outcome)
-        # At once, if the battery is already there on arrival.
-        if self._charging and self._sim.battery.percent >= self._target_percent:
-            self.end("charged")
+        command = self._navigator.control(self._sim.drive, self._sim.step_s)
+        outcome = self._navigator.outcome
+        if outcome is not None:
+            # On the start cell the dock is done. What the pad does then is the battery's.
+            self.end("docked" if outcome == "reached" else outcome)
         return command
 
     def _result(self, reason: str, message: str) -> DockResult:
@@ -388,15 +368,9 @@ class Dock(Goal):
     def _target(self) -> str:
         return "the charging pad"
 
-    def _doing(self) -> str:
-        if self._charging:
-            return "while the turtle charged on the pad"
-        return super()._doing()
-
     def _sentence(self, reason: str) -> str:
-        if reason == "charged":
-            percent = math.floor(self._sim.battery.percent)
-            return f"The turtle stands on the charging pad and the battery is at {percent} %."
+        if reason == "docked":
+            return "The turtle stands on the charging pad."
         if reason == "target_occupied":
             x, y = self._sim.world.start_cell
             return f"The turtle does not fit on the charging pad's cell ({x}, {y})."

@@ -5,7 +5,7 @@ Each service with a call it accepts and, where it can refuse, one it
 refuses. Each action through the reasons a caller meets: `reached`,
 `unreachable`, `target_occupied`, `out_of_range`, `canceled`, `preempted`,
 `teleop_override`, `teleported`, `reset`, a new plan after `set_block`, and
-a dock that ends `charged`. The core's own tests walk every row of the
+a dock that ends `docked`. The core's own tests walk every row of the
 reason table; these show that the rows arrive. Only `stuck` has no test
 here: it takes a turtle held by something the map does not show.
 """
@@ -31,6 +31,7 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from nav_msgs.msg import Path as PathMsg
 from probe import Probe
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import BatteryState
 from std_srvs.srv import SetBool, Trigger
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -79,6 +80,7 @@ class TestServicesAndActions(unittest.TestCase):
         rclpy.init()
         cls.probe = Probe()
         cls.status = cls.probe.listen(TurtleStatus, "/turtle/status")
+        cls.battery = cls.probe.listen(BatteryState, "/battery_state")
         cls.odometry = cls.probe.listen(Odometry, "/odom", qos=500)
         cls.plan = cls.probe.listen(PathMsg, "/turtle/plan", qos=LATCHED)
         cls.trail = cls.probe.listen(PathMsg, "/turtle/trail", qos=LATCHED)
@@ -433,7 +435,7 @@ class TestServicesAndActions(unittest.TestCase):
         self.assertEqual((status, result.reason), (ABORTED, "target_occupied"))
         self.assertEqual(result.message, "The turtle does not fit on cell (2, 100).")
 
-    def test_23_what_names_no_cell_no_square_and_no_charge_is_out_of_range(self):
+    def test_23_what_names_no_cell_and_no_square_is_out_of_range(self):
         for action, name, fields, sentence in [
             (
                 DriveTo,
@@ -446,18 +448,6 @@ class TestServicesAndActions(unittest.TestCase):
                 "/turtle/drive_to_square",
                 {"square": "Z9"},
                 '"Z9" names no square: they run from A1 to P16.',
-            ),
-            (
-                Dock,
-                "/turtle/dock",
-                {"target_percent": 0.0},
-                "A target charge of 0 % is outside 1 to 100.",
-            ),
-            (
-                Dock,
-                "/turtle/dock",
-                {"target_percent": 150.0},
-                "A target charge of 150 % is outside 1 to 100.",
             ),
         ]:
             status, result = self.probe.send(action, name, **fields).result()
@@ -558,7 +548,7 @@ class TestServicesAndActions(unittest.TestCase):
         self.assert_standing()
         self.assertEqual(self.next_status().cell_x, 40)
 
-        sent = self.probe.send(Dock, "/turtle/dock", target_percent=100.0)
+        sent = self.probe.send(Dock, "/turtle/dock")
         self.until_status(lambda s: s.mode == "docking" and s.speed > 0.4)
         self.assertTrue(self.probe.call(Trigger, "/turtle/reset").success)
         status, result = sent.result(timeout=5.0)
@@ -600,25 +590,44 @@ class TestServicesAndActions(unittest.TestCase):
                 # No point of the path lies within the footprint's reach of the rocks.
                 self.assertFalse(6.9 < x < 7.2 and 1.7 < y < 4.4, (x, y))
 
-    def test_28_a_dock_drives_onto_the_pad_and_waits_for_the_battery(self):
-        self.teleport((60, 8))
-        sent = self.probe.send(Dock, "/turtle/dock", target_percent=100.0)
+    def test_28_a_dock_ends_docked_on_the_pad_and_the_battery_charges_by_itself(self):
+        # From the far end of the lane: twelve metres cost more charge than
+        # the last steps on the pad give back.
+        self.teleport(LANE_END, 180.0)
+        sent = self.probe.send(Dock, "/turtle/dock")
         self.until_status(lambda s: s.mode == "docking")
-        status, result = sent.result(timeout=30.0)
+        status, result = sent.result(timeout=60.0)
+        ended = time.monotonic()
         self.assertEqual(status, SUCCEEDED)
-        self.assertEqual((result.success, result.reason), (True, "charged"))
-        self.assertEqual(
-            result.message, "The turtle stands on the charging pad and the battery is at 100 %."
-        )
-        self.assertEqual(result.battery_percent, 100.0)
-        # The way there cost a little charge, so it waited for it on the pad.
-        self.assertEqual(sent.phases(), ["driving", "charging"])
+        self.assertEqual((result.success, result.reason), (True, "docked"))
+        self.assertEqual(result.message, "The turtle stands on the charging pad.")
+        # It did not wait for the charge: the result holds what it arrived with.
+        self.assertLess(result.battery_percent, 99.0)
+        self.assertEqual(sent.phases(), ["planning", "driving"])
         feedback = [message for _, message in sent.feedback]
-        self.assertLess(min(message.battery_percent for message in feedback), 100.0)
-        self.assertAlmostEqual(feedback[0].remaining_m, 5.2, delta=0.01)
-        self.assertEqual(feedback[-1].remaining_m, 0.0)
-        status = self.next_status()
-        self.assertEqual((status.cell_x, status.cell_y, status.on_charger), (8, 8, True))
+        self.assertAlmostEqual(
+            feedback[0].remaining_m, math.dist(centre(LANE_END), centre((8, 8))), delta=0.01
+        )
+        self.assertLess(feedback[-1].remaining_m, 0.5)
+        self.assertLess(min(message.battery_percent for message in feedback), 99.0)
+
+        # No goal runs now. The pad charges all the same, and the mode says so.
+        status = self.until_status(lambda s: s.mode != "docking")
+        self.assertEqual(
+            (status.mode, status.cell_x, status.cell_y, status.on_charger),
+            ("charging", 8, 8, True),
+        )
+        full = self.until_status(lambda s: s.mode != "charging", timeout=30.0)
+        self.assertEqual((full.mode, full.on_charger), ("idle", True))
+        Probe.until(self.battery, lambda b: b.percentage == 1.0, 5.0, "/battery_state at 100 %")
+        since = [message for arrived, message in self.battery if arrived > ended]
+        charge = [message.percentage for message in since]
+        self.assertGreaterEqual(charge[0], result.battery_percent / 100.0 - 1e-6)
+        self.assertLess(charge[0], 1.0)
+        self.assertEqual(charge, sorted(charge))
+        self.assertEqual(charge[-1], 1.0)
+        self.assertEqual(since[0].power_supply_status, BatteryState.POWER_SUPPLY_STATUS_CHARGING)
+        self.assertEqual(since[-1].power_supply_status, BatteryState.POWER_SUPPLY_STATUS_FULL)
         self.assert_standing()
 
     def test_28b_a_late_subscriber_hears_the_path_and_the_trail_and_a_path_ends_on_its_target(self):
@@ -671,7 +680,7 @@ class TestServicesAndActions(unittest.TestCase):
         self.assertEqual(len(late("/turtle/plan").poses), 0)  # the goal ended: no path
 
         # A dock: the path ends on the pad's start cell.
-        sent = self.probe.send(Dock, "/turtle/dock", target_percent=100.0)
+        sent = self.probe.send(Dock, "/turtle/dock")
         self.until_status(lambda s: s.mode == "docking" and s.speed > 0.4)
         plan = late("/turtle/plan")
         self.assertGreaterEqual(len(plan.poses), 2)

@@ -17,7 +17,7 @@ import yaml
 from fleetless_turtle_cameras.render import constants as look
 from fleetless_turtle_sim.core import constants as c
 from fleetless_turtle_sim.core import joints
-from fleetless_turtle_sim.core.goals import REASONS
+from fleetless_turtle_sim.core.goals import REASONS, SUCCEEDED
 from fleetless_turtle_sim.core.world import square_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -361,6 +361,10 @@ def test_every_message_fills_every_field_of_its_request_from_a_parameter(config)
             if definition is None:
                 continue
             fields = fields_of(definition)
+            if not fields:
+                # Nothing to fill: no message and no parameter, as `reset` has none.
+                assert "message" not in entry and "parameters" not in entry, slug
+                continue
             # Each field from the parameter of its own name, nothing fixed and
             # nothing left out. A cell's two fields are the exception: a
             # parameter's name has two letters at least, so `x` is `cell_x`.
@@ -371,6 +375,9 @@ def test_every_message_fills_every_field_of_its_request_from_a_parameter(config)
                 assert entry["parameters"][named[name]]["type"] == kind, f"{slug}.{name}"
     assert "message" not in config["services"]["reset"]
     assert "parameters" not in config["services"]["reset"]
+    # A dock is started with nothing: its goal has no field.
+    assert fields_of(ACTIONS["dock"][2]) == {}
+    assert set(config["actions"]["dock"]) == {"ros_name", "type", "description"}
     trail = config["services"]["set_trail"]
     assert trail["message"] == {"data": "${record}"}
     assert bounds(trail["parameters"]["record"]) == {"type": "bool"}
@@ -395,13 +402,6 @@ def test_the_other_parameters_have_the_specs_bounds_and_defaults(config):
     assert bounds(heading) == {"type": "float32", "min_value": 0, "max_value": 360, "default": 0}
     occupied = config["services"]["set_block"]["parameters"]["occupied"]
     assert bounds(occupied) == {"type": "bool", "default": True}
-    target = config["actions"]["dock"]["parameters"]["target_percent"]
-    assert bounds(target) == {
-        "type": "float32",
-        "min_value": c.DOCK_TARGET_MIN_PERCENT,
-        "max_value": c.DOCK_TARGET_MAX_PERCENT,
-        "default": 100,
-    }
 
 
 def test_the_squares_pattern_takes_the_names_the_turtle_takes_and_no_other(config):
@@ -446,6 +446,8 @@ def test_the_numbers_in_the_goals_descriptions_are_the_simulators(config):
     assert c.ANGULAR_SPEED_LIMIT / c.ANGULAR_ACCELERATION_LIMIT < 2.0
 
     dock = flat(config["actions"]["dock"]["description"])
+    assert "ends when it stands there" in dock
+    assert "The battery then charges by itself, with or without a goal" in dock
     assert "a full charge from empty takes one minute" in dock and c.BATTERY_CHARGING_S == 60
     assert "Feedback comes twice a second" in dock
 
@@ -460,7 +462,7 @@ def test_the_numbers_in_the_goals_descriptions_are_the_simulators(config):
 def test_a_description_names_what_its_messages_really_hold(config):
     for slug, phases in (
         ("drive_to", "planning, driving, replanning"),
-        ("dock", "driving, charging"),
+        ("dock", "planning, driving, replanning"),
     ):
         definition = ACTIONS[slug][2]
         description = flat(config["actions"][slug]["description"])
@@ -480,17 +482,17 @@ def test_every_reason_a_description_names_is_one_the_turtle_gives(config):
         assert re.search(rf"^#   {reason} ", text, re.MULTILINE), reason
     listed = set(re.findall(r"^#   (\w+) +\S.*(?:succeeded|aborted|canceled)$", text, re.MULTILINE))
     assert listed == set(REASONS)
-    for slug in ("drive_to", "dock"):
+    for slug, succeeds_with in (("drive_to", "reached"), ("dock", "docked")):
         # Without what stands in brackets behind a reason, to explain it.
         description = re.sub(r" \([^)]*\)", "", flat(config["actions"][slug]["description"]))
         named = re.search(r"Reasons: ([a-z_, ]+)\.", description)[1].split(", ")
-        assert len(named) >= 8, named
-        assert set(named) <= set(REASONS), slug
-        # What cannot happen to it is not named, and what the cloud refuses
-        # before the turtle hears of it is not either.
-        assert "out_of_range" not in named
-        assert ("charged" in named) == (slug == "dock")
-        assert ("reached" in named) == (slug == "drive_to")
+        # Every reason the turtle can end this goal with, in the list's order.
+        # What cannot happen to it is not named: the other kind's success,
+        # and `out_of_range`. The cloud refuses a drive's cell before the
+        # turtle hears of it, and a dock names nothing that could be out of
+        # range.
+        never = {"out_of_range", *SUCCEEDED} - {succeeds_with}
+        assert named == [reason for reason in REASONS if reason not in never], slug
 
 
 def test_every_action_says_that_a_new_goal_overtakes_a_cancel(config):

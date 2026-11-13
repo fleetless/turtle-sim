@@ -9,6 +9,8 @@ import pytest
 
 from fleetless_turtle_sim.core import constants as c
 from fleetless_turtle_sim.core.goals import (
+    REASONS,
+    SUCCEEDED,
     DockFeedback,
     DockResult,
     DriveFeedback,
@@ -121,62 +123,77 @@ def test_a_drive_to_where_the_turtle_stands_is_reached_at_once(sim):
     assert goal.result.reason == "reached" and goal.result.distance_m == 0.0
 
 
-# --- charged ----------------------------------------------------------------
+# --- docked -----------------------------------------------------------------
 
 
-def test_a_dock_drives_to_the_pads_start_cell_and_waits_for_the_battery(sim):
-    assert sim.teleport(60, 8, 0.0)[0]
+def test_a_dock_drives_to_the_pads_start_cell_and_ends_there(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
     sim.battery.percent = 40.0
-    goal = sim.dock(80.0)
-    assert goal.kind == "dock" and sim.mode == "docking"
-    feedback = goal.feedback()
-    assert feedback == DockFeedback(
-        phase="driving", battery_percent=40.0, remaining_m=pytest.approx(5.2)
+    goal = sim.dock()
+    assert goal.kind == "dock" and goal.result is None and sim.goal is goal
+    assert sim.mode == "docking"
+    assert goal.feedback() == DockFeedback(
+        phase="planning", battery_percent=40.0, remaining_m=pytest.approx(5.2)
     )
     phases = []
+    seconds = 0.0
     while goal.result is None:
+        assert sim.mode == "docking"
         sim.step()
-        phase = goal.feedback().phase
-        if not phases or phases[-1] != phase:
-            phases.append(phase)
-        assert sim.mode == "docking" or goal.result is not None
-    assert phases == ["driving", "charging"]
+        seconds += DT
+        if goal.result is None:
+            phase = goal.feedback().phase
+            if not phases or phases[-1] != phase:
+                phases.append(phase)
+    assert phases == ["driving"]
     result = goal.result
-    assert isinstance(result, DockResult)
-    assert (result.success, result.reason) == (True, "charged")
-    assert result.message == "The turtle stands on the charging pad and the battery is at 80 %."
-    assert result.battery_percent == pytest.approx(80.0, abs=0.05)
-    assert sim.cell == sim.world.start_cell == (8, 8)
-    # Five metres of driving, then about 40 % at 100 % a minute.
-    assert 30.0 < result.duration_s < 45.0
-    assert sim.mode == "charging" and sim.goal is None
-
-
-def test_a_dock_succeeds_at_once_if_the_battery_is_already_there_on_arrival(sim):
-    assert sim.teleport(30, 8, 180.0)[0]
-    goal = sim.dock(50.0)
-    seconds = run(sim, goal)
-    assert goal.result.reason == "charged"
-    assert goal.result.battery_percent > 99.0
-    # The drive, and not a step of waiting.
-    assert seconds < 7.0 and sim.cell == (8, 8)
-
-
-def test_a_dock_on_the_start_cell_with_a_full_battery_ends_at_once(sim):
-    goal = sim.dock(100.0)
-    assert run(sim, goal) <= 2 * DT
-    assert goal.result.reason == "charged"
-    assert goal.result.message == (
-        "The turtle stands on the charging pad and the battery is at 100 %."
+    assert result == DockResult(
+        success=True,
+        reason="docked",
+        message="The turtle stands on the charging pad.",
+        battery_percent=pytest.approx(sim.battery.percent, abs=0.05),
+        duration_s=pytest.approx(seconds - DT),  # it ended with the last step's first look
     )
+    assert sim.cell == sim.world.start_cell == (8, 8)
+    assert math.dist((sim.drive.x, sim.drive.y), cell_centre(8, 8)) < c.GOAL_TOLERANCE_M
+    # The drive and nothing after it: five metres, and the charge it arrived with.
+    assert 10.0 < result.duration_s < 14.0
+    assert 35.0 < result.battery_percent < 45.0
+    assert standing(sim) and sim.goal is None
 
 
-def test_a_dock_to_a_full_battery_waits_until_it_is_full(sim):
-    sim.battery.percent = 10.0
-    goal = sim.dock(100.0)
-    seconds = run(sim, goal)
-    assert goal.result.reason == "charged" and sim.battery.percent == 100.0
-    assert seconds == pytest.approx(0.9 * c.BATTERY_CHARGING_S, abs=0.1)
+def test_the_battery_charges_on_the_pad_once_the_dock_has_ended(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    sim.battery.percent = 40.0
+    goal = sim.dock()
+    run(sim, goal)
+    arrived_with = goal.result.battery_percent
+    # No goal, and the mode says what the pad does.
+    assert sim.goal is None and sim.mode == "charging"
+    wait(sim, 12.0)
+    assert sim.goal is None and sim.mode == "charging"
+    gained = 12.0 * 100.0 / c.BATTERY_CHARGING_S
+    assert sim.battery.percent == pytest.approx(arrived_with + gained, abs=0.1)
+    assert goal.result.battery_percent == arrived_with  # the result is the arrival's
+    wait(sim, c.BATTERY_CHARGING_S)
+    assert sim.battery.percent == 100.0 and sim.mode == "idle"
+
+
+@pytest.mark.parametrize("percent", [100.0, 10.0])
+def test_a_dock_on_the_start_cell_ends_at_once_whatever_the_battery_holds(sim, percent):
+    sim.battery.percent = percent
+    goal = sim.dock()
+    assert run(sim, goal) <= 2 * DT
+    result = goal.result
+    assert (result.success, result.reason) == (True, "docked")
+    assert result.message == "The turtle stands on the charging pad."
+    assert result.battery_percent == pytest.approx(percent, abs=0.1)
+    assert sim.cell == (8, 8) and standing(sim)
+
+
+def test_the_reasons_a_goal_succeeds_with_are_reached_and_docked():
+    assert SUCCEEDED == ("reached", "docked")
+    assert set(SUCCEEDED) < set(REASONS) and len(set(REASONS)) == len(REASONS) == 11
 
 
 # --- out_of_range -----------------------------------------------------------
@@ -215,21 +232,6 @@ def test_the_sentence_stays_one_line_whatever_was_sent(sim):
     assert goal.result.reason == "out_of_range"
     assert goal.result.message == '"A1?" names no square: they run from A1 to P16.'
     assert sim.drive_to_square("C7\x00\t").result.message.startswith('"C7??" names no square')
-
-
-@pytest.mark.parametrize("target", [0.0, 0.99, 100.01, 150.0, -5.0, math.nan, math.inf])
-def test_a_target_charge_outside_1_to_100_is_out_of_range(sim, target):
-    goal = sim.dock(target)
-    result = goal.result
-    assert (result.success, result.reason) == (False, "out_of_range")
-    assert result.message == f"A target charge of {target:g} % is outside 1 to 100."
-    assert (result.battery_percent, result.duration_s) == (100.0, 0.0)
-    assert sim.goal is None
-
-
-@pytest.mark.parametrize("target", [1.0, 100.0, 50.5])
-def test_the_bounds_of_the_target_charge_are_in_range(sim, target):
-    assert sim.dock(target).result is None
 
 
 # --- target_occupied --------------------------------------------------------
@@ -284,6 +286,32 @@ def test_a_square_whose_cell_gets_blocked_is_reached_on_another_of_its_cells(sim
     assert cell != (119, 7) and 112 <= cell[0] <= 127 and 0 <= cell[1] <= 15
     assert goal.result.message == "The turtle reached square H1 at cell ({}, {}).".format(*cell)
     assert first.remaining_m > 0.0
+
+
+def test_a_dock_whose_start_cell_the_turtle_does_not_fit_on_is_occupied(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    # A rock on the pad, beside the start cell. `set_block` would decline it.
+    sim.world.set_kind(9, 8, c.ROCK)
+    goal = sim.dock()
+    assert goal.result == DockResult(
+        success=False,
+        reason="target_occupied",
+        message="The turtle does not fit on the charging pad's cell (8, 8).",
+        battery_percent=100.0,
+        duration_s=0.0,
+    )
+    assert sim.goal is None and sim.mode == "idle" and standing(sim)
+
+
+def test_a_start_cell_that_gets_taken_while_the_dock_drives_makes_it_occupied(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    goal = driving(sim, sim.dock())
+    sim.world.set_kind(9, 8, c.ROCK)
+    goal.world_changed()
+    seconds = run(sim, goal, seconds=2.0)
+    assert (goal.result.success, goal.result.reason) == (False, "target_occupied")
+    assert goal.result.message == "The turtle does not fit on the charging pad's cell (8, 8)."
+    assert seconds < 1.0 and standing(sim) and sim.cell != (8, 8)
 
 
 # --- unreachable ------------------------------------------------------------
@@ -341,7 +369,7 @@ def test_a_dock_from_a_yard_without_a_door_is_unreachable(kinds):
     enclose(kinds)
     sim = Simulation(World(kinds))
     assert sim.teleport(110, 110, 0.0)[0]
-    goal = sim.dock(100.0)
+    goal = sim.dock()
     run(sim, goal)
     assert goal.result.reason == "unreachable"
     assert goal.result.message == "No path leads from cell (110, 110) to the charging pad."
@@ -388,7 +416,7 @@ def test_a_turtle_that_gets_nowhere_is_stuck_after_five_seconds(sim):
 
 def test_a_dock_can_get_stuck_too(sim):
     assert sim.teleport(60, 8, 180.0)[0]
-    goal = sim.dock(100.0)
+    goal = sim.dock()
     sim.world.fits = lambda x, y: False
     run(sim, goal)
     assert goal.result.reason == "stuck"
@@ -425,7 +453,7 @@ def test_each_kind_of_goal_preempts_and_is_preempted(sim, kind):
     start = {
         "drive_to": lambda: sim.drive_to(120, 60),
         "drive_to_square": lambda: sim.drive_to_square("H4"),
-        "dock": lambda: sim.dock(100.0),
+        "dock": sim.dock,
     }
     assert sim.teleport(60, 60, 0.0)[0]
     running = start[kind]()
@@ -451,24 +479,15 @@ def test_a_goal_that_asks_for_the_impossible_preempts_all_the_same(sim):
     assert standing(sim)
 
 
-def test_a_preempted_dock_says_which_phase_it_was_in(sim):
-    sim.battery.percent = 5.0
-    charging = sim.dock(100.0)
-    wait(sim, 1.0)
-    assert charging.feedback().phase == "charging"
-    sim.drive_to(40, 24)
-    assert charging.result.reason == "preempted"
-    assert charging.result.message == (
-        "Another goal was accepted while the turtle charged on the pad."
-    )
-
+def test_a_preempted_dock_was_on_the_way_to_the_pad(sim):
     assert sim.teleport(60, 8, 180.0)[0]
-    on_the_way = sim.dock(100.0)
-    wait(sim, 2.0)
-    sim.drive_to(40, 24)
-    assert on_the_way.result.message == (
-        "Another goal was accepted on the way to the charging pad."
-    )
+    goal = driving(sim, sim.dock())
+    following = sim.drive_to(40, 24)
+    result = goal.result
+    assert isinstance(result, DockResult)
+    assert (result.success, result.reason) == (False, "preempted")
+    assert result.message == "Another goal was accepted on the way to the charging pad."
+    assert result.duration_s == pytest.approx(3.0) and sim.goal is following
 
 
 # --- teleop_override --------------------------------------------------------
@@ -519,16 +538,16 @@ def test_a_value_that_is_no_number_counts_as_zero_for_a_goal_too(sim):
     assert sim.drive.non_finite_commands == 11
 
 
-def test_a_command_ends_a_dock_that_charges(sim):
-    sim.battery.percent = 5.0
-    goal = sim.dock(100.0)
-    wait(sim, 1.0)
+def test_a_command_ends_a_dock(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    sim.battery.percent = 50.0
+    goal = driving(sim, sim.dock())
     sim.command(0.3, 0.0)
-    assert goal.result.reason == "teleop_override"
-    assert (
-        goal.result.message == "A velocity command took over while the turtle charged on the pad."
-    )
-    assert goal.result.battery_percent == pytest.approx(5.0 + 100.0 / 60.0, abs=0.1)
+    assert (goal.result.success, goal.result.reason) == (False, "teleop_override")
+    assert goal.result.message == "A velocity command took over on the way to the charging pad."
+    assert goal.result.battery_percent == pytest.approx(sim.battery.percent)
+    assert goal.result.battery_percent < 50.0  # the way cost charge, and nothing gave it back
+    assert sim.goal is None and sim.mode == "teleop"
 
 
 # --- teleported -------------------------------------------------------------
@@ -557,6 +576,15 @@ def test_a_teleport_that_is_declined_ends_nothing(sim):
     assert goal.result.reason == "reached"
 
 
+def test_a_teleport_ends_a_dock(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    goal = driving(sim, sim.dock())
+    assert sim.teleport(100, 100, 0.0)[0]
+    assert (goal.result.success, goal.result.reason) == (False, "teleported")
+    assert goal.result.message == "The turtle was teleported on the way to the charging pad."
+    assert sim.goal is None and sim.cell == (100, 100) and sim.mode == "idle"
+
+
 # --- reset ------------------------------------------------------------------
 
 
@@ -575,12 +603,12 @@ def test_reset_ends_a_goal(sim):
 
 
 def test_reset_ends_a_dock(sim):
-    sim.battery.percent = 5.0
-    goal = sim.dock(100.0)
-    wait(sim, 1.0)
+    assert sim.teleport(60, 8, 180.0)[0]
+    goal = driving(sim, sim.dock())
     sim.reset()
-    assert goal.result.reason == "reset"
-    assert goal.result.message == "The simulator was reset while the turtle charged on the pad."
+    assert (goal.result.success, goal.result.reason) == (False, "reset")
+    assert goal.result.message == "The simulator was reset on the way to the charging pad."
+    assert sim.goal is None and sim.cell == (8, 8)
 
 
 # --- canceled ---------------------------------------------------------------
@@ -633,13 +661,13 @@ def test_a_new_goal_overtakes_a_cancel_that_is_still_braking_the_turtle(sim, aft
     cancelled.cancel()
     wait(sim, after)
     assert cancelled.result is None and sim.drive.linear > 0.0
-    following = sim.dock(100.0)
+    following = sim.dock()
     result = cancelled.result
     assert (result.success, result.reason) == (False, "preempted")
     assert result.message == "Another goal was accepted on the way to cell (120, 8)."
     assert sim.goal is following
     run(sim, following)
-    assert following.result.reason == "charged"
+    assert following.result.reason == "docked"
 
 
 def test_a_cancel_that_has_stopped_the_turtle_is_not_overtaken(sim):
@@ -647,7 +675,7 @@ def test_a_cancel_that_has_stopped_the_turtle_is_not_overtaken(sim):
     cancelled.cancel()
     run(sim, cancelled, seconds=2.0)
     assert cancelled.result.reason == "canceled"
-    following = sim.dock(100.0)
+    following = sim.dock()
     assert cancelled.result.reason == "canceled" and sim.goal is following
 
 
@@ -662,14 +690,15 @@ def test_a_cancel_ends_a_crawling_turtle_as_quickly(sim):
     assert goal.result.reason == "canceled" and standing(sim)
 
 
-def test_a_cancel_ends_a_dock_that_charges_with_the_next_step(sim):
-    sim.battery.percent = 5.0
-    goal = sim.dock(100.0)
-    wait(sim, 1.0)
+def test_a_cancel_brakes_a_dock_and_ends_it_once_the_turtle_stands(sim):
+    assert sim.teleport(60, 8, 180.0)[0]
+    goal = driving(sim, sim.dock())
     goal.cancel()
-    assert run(sim, goal) == DT
-    assert goal.result.reason == "canceled"
-    assert goal.result.message == "The goal was cancelled while the turtle charged on the pad."
+    seconds = run(sim, goal, seconds=5.0)
+    assert (goal.result.success, goal.result.reason) == (False, "canceled")
+    assert goal.result.message == "The goal was cancelled on the way to the charging pad."
+    assert seconds < 2.0 and standing(sim) and sim.goal is None
+    assert sim.cell != (8, 8) and sim.mode == "idle"
 
 
 def test_cancelling_a_goal_that_has_ended_changes_nothing(sim):
@@ -705,21 +734,43 @@ def test_the_feedback_of_a_drive_counts_down_and_the_progress_up(sim):
     assert all(type(feedback.progress) is float for feedback in seen)
 
 
-def test_the_feedback_of_a_dock_names_the_battery_and_the_way_left(sim):
+def test_the_feedback_of_a_dock_names_the_phase_the_battery_and_the_way_left(sim):
     assert sim.teleport(60, 8, 180.0)[0]
     sim.battery.percent = 20.0
-    goal = sim.dock(60.0)
-    wait(sim, 4.0)
-    on_the_way = goal.feedback()
-    assert on_the_way.phase == "driving" and 3.0 < on_the_way.remaining_m < 4.5
-    assert on_the_way.battery_percent < 20.0
-    while goal.feedback().phase == "driving":
+    goal = sim.dock()
+    assert goal.feedback() == DockFeedback(
+        phase="planning", battery_percent=20.0, remaining_m=pytest.approx(5.2)
+    )
+    seen = []
+    while goal.result is None:
         sim.step()
-    wait(sim, 5.0)
-    charging = goal.feedback()
-    assert charging.phase == "charging" and charging.remaining_m == 0.0
-    assert charging.battery_percent == pytest.approx(sim.battery.percent)
-    assert goal.result is None and 20.0 < sim.battery.percent < 60.0
+        feedback = goal.feedback()
+        assert feedback.battery_percent == sim.battery.percent
+        seen.append(feedback)
+    assert {feedback.phase for feedback in seen[:-1]} == {"driving"}
+    remaining = [feedback.remaining_m for feedback in seen]
+    assert all(b <= a + 1e-9 for a, b in itertools.pairwise(remaining))
+    assert remaining[0] == pytest.approx(5.2, abs=0.001) and remaining[-1] < c.GOAL_TOLERANCE_M
+    assert all(type(feedback.remaining_m) is float for feedback in seen)
+    # The way cost charge, until the pad gave some back.
+    assert min(feedback.battery_percent for feedback in seen) < 20.0
+
+
+def test_a_dock_whose_way_gets_blocked_plans_again_and_says_so(sim):
+    assert sim.teleport(120, 8, 180.0)[0]
+    goal = driving(sim, sim.dock())
+    for y in range(20):
+        assert sim.set_block(80, y, True)[0]  # a row of rocks across the line
+    phases = []
+    while goal.result is None:
+        sim.step()
+        if goal.result is None:
+            phase = goal.feedback().phase
+            if not phases or phases[-1] != phase:
+                phases.append(phase)
+    assert phases == ["replanning", "driving"]
+    assert goal.result.reason == "docked" and sim.drive.collisions == 0
+    assert sim.cell == (8, 8)
 
 
 # --- The mode and the path --------------------------------------------------
@@ -731,10 +782,12 @@ def test_the_mode_is_auto_while_a_drive_runs_and_docking_while_a_dock_does(sim):
     assert sim.mode == "auto" and sim.status().mode == "auto"
     wait(sim, 2.0)
     assert sim.mode == "auto"
-    dock = sim.dock(100.0)
+    sim.battery.percent = 50.0
+    dock = sim.dock()
     assert drive.result.reason == "preempted" and sim.mode == "docking"
     run(sim, dock)
-    assert sim.mode == "idle"
+    # The goal is over. The charging is not, and it needs no goal.
+    assert dock.result.reason == "docked" and sim.mode == "charging"
 
 
 def test_a_goal_ranks_above_teleop_and_charging(sim):
@@ -742,9 +795,14 @@ def test_a_goal_ranks_above_teleop_and_charging(sim):
     sim.command(0.2, 0.0)
     sim.step()
     assert sim.mode == "teleop"
-    goal = sim.dock(100.0)
+    goal = sim.dock()
     assert sim.mode == "docking"
     run(sim, goal)
+    # The goal is gone. The command is half a second old at most, then the pad is next.
+    assert goal.result.reason == "docked" and sim.mode == "teleop"
+    wait(sim, c.COMMAND_TIMEOUT_S)
+    assert sim.mode == "charging"
+    wait(sim, c.BATTERY_CHARGING_S)
     assert sim.mode == "idle"  # full, on the pad
 
 
@@ -788,7 +846,7 @@ def test_the_same_goals_give_the_same_run_twice(kinds):
         for start in (
             lambda: sim.drive_to(90, 40),
             lambda: sim.drive_to_square("D5"),
-            lambda: sim.dock(100.0),
+            sim.dock,
         ):
             goal = start()
             run(sim, goal)

@@ -379,8 +379,8 @@ services:
 # time, across all three actions.
 #
 #   reached           it stands on the target                       succeeded
-#   charged           dock: the battery has reached the target      succeeded
-#   out_of_range      no such cell, no such square, no such charge  aborted
+#   docked            dock: it stands on the charging pad           succeeded
+#   out_of_range      no such cell, no such square                  aborted
 #   target_occupied   the target blocks, or the turtle does not fit aborted
 #   unreachable       no path leads there                           aborted
 #   stuck             no progress for five seconds                  aborted
@@ -452,25 +452,18 @@ actions:
     ros_name: /turtle/dock
     type: fleetless_turtle_msgs/action/Dock
     description: |
-      Drives the turtle onto the charging pad in square A1 and waits there
-      until the battery has reached `target_percent`; a full charge from
-      empty takes one minute. It succeeds at once if the battery is
-      already there on arrival. Feedback comes twice a second: `phase`
-      (driving, charging), `battery_percent` and `remaining_m`. The result
-      carries `success`, `reason`, a `message` of one sentence,
-      `battery_percent` and `duration_s`. Reasons: charged, unreachable,
-      stuck, preempted, teleop_override, teleported, reset, canceled. A
-      goal that is started before a cancel of this one has stopped the
-      turtle overtakes the cancel, and this one ends `preempted`.
-    message:
-      target_percent: ${target_percent}
-    parameters:
-      target_percent:
-        type: float32
-        min_value: 1
-        max_value: 100
-        default: 100
-        description: The charge to wait for on the pad, in percent.
+      Drives the turtle onto the charging pad in square A1, to the cell
+      `reset` puts it on, and ends when it stands there. The battery then
+      charges by itself, with or without a goal; a full charge from empty
+      takes one minute. Feedback comes twice a second: `phase` (planning,
+      driving, replanning), `battery_percent` and `remaining_m`. The
+      result carries `success`, `reason`, a `message` of one sentence,
+      `battery_percent` (the charge on arrival) and `duration_s`. Reasons:
+      docked, target_occupied (the turtle does not fit on that cell),
+      unreachable, stuck, preempted, teleop_override, teleported, reset,
+      canceled. A goal that is started before a cancel of this one has
+      stopped the turtle overtakes the cancel, and this one ends
+      `preempted`.
 
 cameras:
   # Both are drawn inside the container, on the CPU, ten times a second.

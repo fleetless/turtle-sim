@@ -72,7 +72,6 @@ def test_navigation():
 
 def test_the_goals():
     assert c.GOAL_FEEDBACK_RATE_HZ == 2.0
-    assert (c.DOCK_TARGET_MIN_PERCENT, c.DOCK_TARGET_MAX_PERCENT) == (1.0, 100.0)
 
 
 def test_the_followers_own_numbers_stay_inside_the_specs():
