@@ -68,9 +68,10 @@ vendored, and `test/test_page.py` holds the page to that.
 ### The token
 
 `FLEETLESS_TOKEN` comes from the environment and binds the bridge to exactly
-one robot. The turtle's own code asks one thing of it: whether it is set.
-With a token the launch file starts the bridge; without one it says so and
-starts none. The bridge reads the token and presents it to the cloud; its own
+one robot. The turtle's own code asks one thing of it: whether there is one.
+A token that is empty or only blanks counts as none. With a token the launch
+file starts the bridge; without one it says so and starts none. The bridge
+reads the token and presents it to the cloud; its own
 `SECURITY.md` says how it treats it. Nothing of the turtle's logs the token,
 writes it to a file or serves it.
 
