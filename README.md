@@ -348,6 +348,14 @@ within 4 m is `inf` in `/scan`, as REP 117 asks, and the bridge sends that as
 `null`. A range sensor that sees nothing reports its `max_range`, 4.0, a
 number, so a chart of `range_front` has no holes.
 
+**The simulator speaks UDP only, under the image's own settings.** Name
+peers in `ROS_STATIC_PEERS`, another `ROS_AUTOMATIC_DISCOVERY_RANGE`,
+`ROS_LOCALHOST_ONLY=1`, another middleware or a Fast DDS profile of your
+own, and it is left as ROS makes it. Where that is Fast DDS with its shared
+memory, the world can stand for a third of a second when a node with a
+client of one of the turtle's services or actions joins, a
+`ros2 service call` from a shell for one.
+
 ## 🔧 Testing an unreleased bridge
 
 Mount a checkout of the bridge at `/bridge-src`. The container copies it,
