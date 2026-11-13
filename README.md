@@ -402,6 +402,11 @@ runner:
 | `yaml` | the yaml against the schema of `@fleetless/contracts`, and the release script |
 | `image` | builds the image, runs its smoke test, and brings `docker-compose.yaml` up against it |
 
+A test of the ROS packages that does not end is ended after three minutes:
+every thread's stack goes to the log, the stage fails, and its last line
+names the test. One that honestly needs longer says so with
+`@pytest.mark.stands(seconds)`.
+
 ## 🤝 Contributing
 
 Pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) says how to
