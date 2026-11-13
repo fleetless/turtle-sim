@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# Every pull request and every push to `main`: everything ./run-tests.sh
-# knows, one mode per step, cheapest first, so the quickest failure is the
-# first one. All of it runs in Docker; the runner brings nothing else.
+# Every pull request and every push to `main`: the commit messages, then
+# everything ./run-tests.sh knows, one mode per step, cheapest first, so the
+# quickest failure is the first one. The modes run in Docker. The commit
+# messages are read by Node on the runner itself: that check is about the
+# git history, which a container that is handed the tree does not see.
 #
-# A hosted runner: this repository is meant to become public, and a pull
-# request is then a stranger's code.
+# A hosted runner: this repository is public, and a pull request is a
+# stranger's code.
 name: verify
 
 on:
@@ -33,6 +35,35 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          # The whole history, not the action's one commit. The step below
+          # reads the commits between two points, and a clone that holds
+          # neither of them could only guess. It also has to hold the commit
+          # that check starts after, or the check refuses the clone.
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      # Nothing internal in the messages of the commits this run is about
+      # (scripts/verify-commit-messages.mjs says what counts), after the
+      # check's own tests. Which commits:
+      #
+      # - a push to `main`: `before..sha`, exactly what was pushed. Only a
+      #   push hands the two over.
+      # - a pull request: `origin/main..HEAD`, the script's default. HEAD is
+      #   the merge commit GitHub makes, so that is every commit of the
+      #   branch, on every push to it. The event's own `before` is not
+      #   used: on a later push it is the branch's head of the push before,
+      #   and the commits up to it would go unread.
+      #
+      # The script prints the range and the number of messages it read.
+      - name: commit messages
+        env:
+          PUSHED_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          PUSHED_HEAD: ${{ github.event_name == 'push' && github.sha || '' }}
+        run: |
+          node --test --test-reporter=spec "scripts/*.test.mjs"
+          node scripts/verify-commit-messages.mjs
       - name: lint
         run: ./run-tests.sh lint
       - name: unit
