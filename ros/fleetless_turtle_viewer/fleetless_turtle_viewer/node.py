@@ -450,6 +450,24 @@ async def serve(node: ViewerNode, hub: Hub, stop: asyncio.Event) -> None:
         await runner.cleanup()
 
 
+def hear_a_stop(stop: threading.Event) -> None:
+    """Take a request to stop. Whoever hears one calls this, on the thread that heard it.
+
+    It arms the faulthandler first and sets `stop` after, so the last resort
+    stands before anybody knows of the stop and before a line of it runs.
+    The thread that waits for `stop` could not see to that: once woken it
+    still needs Python's lock, and on a busy machine the stop reaches a ROS
+    call that keeps the lock before the thread got it. Then it never runs.
+
+    The bound counts from the first request: a second one, as launch's
+    SIGTERM is, arms nothing.
+    """
+    if stop.is_set():
+        return
+    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
+    stop.set()
+
+
 def _hold_a_stop_to_its_bound(stop: threading.Event, ended: threading.Event) -> None:
     """Wait for the stop, then give the node `STOP_BOUND_S` to end. A thread of its own runs this.
 
@@ -466,14 +484,13 @@ def _hold_a_stop_to_its_bound(stop: threading.Event, ended: threading.Event) -> 
     Python's lock, and then no Python thread runs again, this one included.
     The faulthandler's own thread needs no lock: it writes where every
     thread stands, which names the call, and ends the process with exit
-    code 1.
+    code 1. `hear_a_stop` has armed it by the time this thread is woken.
 
-    A stop that ends in time sets `ended`, and neither says anything.
+    A stop that ends in time takes the faulthandler's bound away and sets
+    `ended`, and neither says anything.
     """
     stop.wait()
-    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
     if ended.wait(STOP_BOUND_S):
-        faulthandler.cancel_dump_traceback_later()
         return
     words = f"The view did not finish stopping within {STOP_BOUND_S:g} s and ends without it."
     os.write(2, f"{words}\n".encode())
@@ -481,7 +498,7 @@ def _hold_a_stop_to_its_bound(stop: threading.Event, ended: threading.Event) -> 
 
 
 def run(stop: threading.Event, args=None) -> int:
-    """Run the node until a stop arrives. `start.py` sets `stop` on SIGINT and SIGTERM."""
+    """Run the node until a stop arrives. `start.py` hands SIGINT and SIGTERM to `hear_a_stop`."""
     if stop.is_set():
         return 0  # asked to stop during the imports: there is nothing to undo
     ended = threading.Event()
@@ -512,6 +529,7 @@ def run(stop: threading.Event, args=None) -> int:
         node.destroy_node()
         rclpy.try_shutdown()
         loop.close()
+        faulthandler.cancel_dump_traceback_later()
         ended.set()
         return 0
 
@@ -525,10 +543,11 @@ def run(stop: threading.Event, args=None) -> int:
     spinning = threading.Thread(target=spin, name="ros", daemon=True)
     spinning.start()
 
-    # From here on a stop wakes the event loop. One that came a moment
-    # earlier has set the flag, which is why the flag is read after.
+    # From here on a stop wakes the event loop, which hears it here. One
+    # that came a moment earlier has set the flag, which is why the flag is
+    # read after.
     def on_stop() -> None:
-        stop.set()  # the thread that holds the stop to its bound waits for this one
+        hear_a_stop(stop)  # before the server closes: its last seconds are under the bound
         stopping.set()
 
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -547,5 +566,6 @@ def run(stop: threading.Event, args=None) -> int:
         node.destroy_node()
         rclpy.try_shutdown()
         loop.close()
+        faulthandler.cancel_dump_traceback_later()
         ended.set()
     return code

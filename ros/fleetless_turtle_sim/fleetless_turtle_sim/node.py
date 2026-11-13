@@ -568,6 +568,24 @@ def _message(message, snapshot: DriveResult | DockResult | DriveFeedback | DockF
     return message
 
 
+def hear_a_stop(stop: threading.Event) -> None:
+    """Take a request to stop. Whoever hears one calls this, on the thread that heard it.
+
+    It arms the faulthandler first and sets `stop` after, so the last resort
+    stands before anybody knows of the stop and before a line of it runs.
+    The thread that waits for `stop` could not see to that: once woken it
+    still needs Python's lock, and on a busy machine the stop reaches a ROS
+    call that keeps the lock before the thread got it. Then it never runs.
+
+    The bound counts from the first request: a second one, as launch's
+    SIGTERM is, or one that finds the node ending for a failure, arms nothing.
+    """
+    if stop.is_set():
+        return
+    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
+    stop.set()
+
+
 def _hold_a_stop_to_its_bound(
     stop: threading.Event, failures: list, ended: threading.Event
 ) -> None:
@@ -585,16 +603,15 @@ def _hold_a_stop_to_its_bound(
     Python's lock, and then no Python thread runs again, this one included.
     The faulthandler's own thread needs no lock: it writes where every
     thread stands, which names the call, and ends the process with exit
-    code 1.
+    code 1. `hear_a_stop` has armed it by the time this thread is woken.
 
-    A stop that ends in time sets `ended`, and neither says anything.
+    A stop that ends in time takes the faulthandler's bound away and sets
+    `ended`, and neither says anything.
     """
     stop.wait()
     if failures:
         return  # no stop that was asked for: the failure ends the node, in its own words
-    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
     if ended.wait(STOP_BOUND_S):
-        faulthandler.cancel_dump_traceback_later()
         return
     words = f"The simulator did not finish stopping within {STOP_BOUND_S:g} s and ends without it."
     os.write(2, f"{words}\n".encode())
@@ -602,7 +619,7 @@ def _hold_a_stop_to_its_bound(
 
 
 def run(stop: threading.Event, args=None) -> int:
-    """Run the node until `stop` is set. `start.py` sets it on SIGINT and SIGTERM.
+    """Run the node until `stop` is set. `start.py` hands SIGINT and SIGTERM to `hear_a_stop`.
 
     This process takes the signals itself. Left to ROS, a signal closes the
     context at once, under a timer that is about to publish into it.
@@ -626,6 +643,7 @@ def run(stop: threading.Event, args=None) -> int:
         # launch whose other node gave up. Nothing is wrong: leave quietly.
         node.destroy_node()
         rclpy.try_shutdown()
+        faulthandler.cancel_dump_traceback_later()
         ended.set()
         return 0
 
@@ -654,6 +672,7 @@ def run(stop: threading.Event, args=None) -> int:
     spinning.join(timeout=5.0)
     node.destroy_node()
     rclpy.try_shutdown()
+    faulthandler.cancel_dump_traceback_later()
     ended.set()
     if failures:
         raise failures[0]
