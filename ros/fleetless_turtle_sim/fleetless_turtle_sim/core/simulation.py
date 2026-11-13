@@ -89,6 +89,10 @@ class Simulation:
         self.trail: list[tuple[float, float]] = []
         """The recorded trail, oldest point first, in metres."""
         self.trail_version = 0
+        """Grows whenever the trail changes: a point more, emptied, switched."""
+        self.trail_number = 0
+        """Which trail this is. A new one begins when it is emptied or switched,
+        by `reset` and `set_trail`; a trail that grows stays the same trail."""
         self.goal: Goal | None = None
         """The goal that runs, if one does."""
         self.plan: tuple[Point, ...] = ()
@@ -293,6 +297,7 @@ class Simulation:
     def _clear_trail(self, on: bool) -> None:
         if self.trail or self.trail_on != on:
             self.trail_version += 1
+            self.trail_number += 1
         self.trail = []
         self.trail_on = on
 
