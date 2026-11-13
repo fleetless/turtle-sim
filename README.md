@@ -11,9 +11,6 @@ It needs no GPU, no X11 and no robot.
 
 ## 🚀 Three steps
 
-> The image is private for now. Run `docker login ghcr.io` first, with a
-> token that may read the packages of the `fleetless` organisation.
-
 **1. Create the robot.** In the [console](https://console.fleetless.dev), open
 **Robots** and create one. The token (`frt_…`) is shown once. Copy it.
 
