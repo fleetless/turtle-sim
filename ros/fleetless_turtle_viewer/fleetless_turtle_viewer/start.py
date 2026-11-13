@@ -6,7 +6,8 @@ Importing ROS and aiohttp and building the node takes a second or two, and
 a stop in that time used to meet Python's own handler: a stack trace where
 "stopped" was meant. From here on a stop does what fits the moment: while
 the imports run, nothing exists yet that would want shutting down, and the
-process leaves at once; after that it sets a flag, and the node looks at it.
+process leaves at once; after that the node's `hear_a_stop` takes it, which
+arms the stop's last resort and sets a flag, and the node looks at the flag.
 """
 
 import os
@@ -21,12 +22,12 @@ def main() -> int:
     def on_stop(*_) -> None:
         if not running:
             os._exit(0)
-        stop.set()
+        hear_a_stop(stop)
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, on_stop)
     # The slow part: rclpy, the messages and aiohttp.
-    from .node import run
+    from .node import hear_a_stop, run
 
     running = True
     return run(stop)
