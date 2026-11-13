@@ -232,7 +232,7 @@ One container, one launch file, five processes:
 | the cameras | `fleetless_turtle_cameras` | Subscribes like anybody else and draws both pictures on the CPU, with numpy and OpenCV. A camera nobody subscribes to is not drawn. |
 | the model's publisher | `robot_state_publisher` | ROS's own. Publishes the URDF and turns the joints into transforms. |
 | the view | `fleetless_turtle_viewer` | Subscribes like anybody else and serves the page. It only shows; nothing a browser sends changes anything. |
-| the bridge | `ros-jazzy-fleetless-bridge` | Fleetless's own package from its apt repository, started by its own launch file, unchanged. Only with a token. |
+| the bridge | `ros-jazzy-fleetless-bridge` | Fleetless's own package, the `.deb` of its release, started by its own launch file, unchanged. Only with a token. |
 
 Nothing is special about any of them. The bridge sees the turtle through
 ROS topics, services and actions, as it would see any robot, and the view
@@ -371,9 +371,16 @@ package and version it replaces. A build that fails ends the container; the
 installed bridge is not started in its place. For a cloud
 other than the default, add `-e FLEETLESS_CLOUD_URL=wss://…/bridge`.
 
-The bridge in the image is pinned to one exact version in the `Dockerfile`.
-A workflow asks Fleetless's apt repository once a day and opens a pull
-request when there is a newer one.
+The bridge in the image is pinned twice in the `Dockerfile`: one exact
+version, and the SHA-256 of its `.deb`. The build takes that file from the
+bridge's [GitHub release](https://github.com/fleetless/bridge/releases) and
+stops if its sum is another. It is the file Fleetless's apt repository
+serves for that version. apt keeps only the newest bridge and a release
+keeps its files, so an older commit of this repository still builds.
+
+A workflow asks apt which bridge it serves, once a day and when Fleetless
+publishes a new one there. If that is newer than the pin, it opens a pull
+request that moves both lines. A person merges it.
 
 ## ✅ Tests
 
