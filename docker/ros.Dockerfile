@@ -10,8 +10,8 @@ COPY ros/fleetless_turtle_viewer/package.xml /manifests/fleetless_turtle_viewer/
 COPY ros/fleetless_turtle_cameras/package.xml /manifests/fleetless_turtle_cameras/package.xml
 COPY ros/fleetless_turtle_description/package.xml /manifests/fleetless_turtle_description/package.xml
 COPY ros/fleetless_turtle_bringup/package.xml /manifests/fleetless_turtle_bringup/package.xml
-# The bridge is no rosdep key: the real image installs it from Fleetless's
-# apt repository, and no test here needs it.
+# The bridge is no rosdep key: the real image installs it from the bridge's
+# release, and no test here needs it.
 RUN apt-get update \
  && rosdep update --rosdistro "$ROS_DISTRO" \
  && rosdep install --from-paths /manifests --ignore-src -y --skip-keys fleetless_bridge \

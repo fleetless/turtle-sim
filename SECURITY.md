@@ -110,6 +110,34 @@ containers reach neither the graph nor the view. The host still does.
 A directory mounted at `/bridge-src` is built and run in place of the
 installed bridge. Code you mount is code you run.
 
+### What the build fetches
+
+Building the image takes four things from the network:
+
+| What | From | Held to |
+|---|---|---|
+| the base image, `ros:jazzy-ros-base` | Docker Hub | its tag; no digest is pinned |
+| Ubuntu's and ROS's packages | their apt repositories | the keys the base image carries; no version is pinned |
+| rosdep's lists | GitHub, over HTTPS | nothing more |
+| the bridge, one `.deb` | the bridge's GitHub release, over HTTPS | the SHA-256 the `Dockerfile` pins |
+
+The bridge is the one package that does not come through apt, so the
+`Dockerfile` pins its bytes: the version, and the SHA-256 of the `.deb`. The
+build computes the sum of what it downloaded before anything installs it,
+and ends there if it is another: `The bridge's .deb is not the one this
+Dockerfile pins`. A file that was replaced in the release after the pin was
+written does not get into an image. The build asks nothing of Fleetless's
+apt repository: no source, no key.
+
+**The residual, stated plainly:** a sum says which bytes, not who built
+them. That rests on the pin being right when it was written. A workflow
+writes it, `bridge-bump`: it takes the sum from `SHA256SUMS` of the
+bridge's release and holds it against the `SHA256` that Fleetless's apt
+repository lists for the same version, the file apt installs on a robot. If
+the two differ it opens nothing. It reads both over HTTPS; the apt index is
+signed, and the workflow does not check that signature. The pull request it
+opens is merged by a person.
+
 ### What is out of scope
 
 - The Fleetless Bridge inside the image, and the Fleetless cloud. The bridge
@@ -128,5 +156,6 @@ installed bridge. Code you mount is code you run.
 The most recent release gets security fixes: `ghcr.io/fleetless/turtle-sim:latest`,
 which is also its `X.Y.Z` tag. Older tags don't, and no released image is
 built again: a fix is a new release. The bridge inside is pinned to one exact
-version, which the release's notes name. A workflow asks Fleetless's apt
-repository once a day and opens a pull request when it serves a newer one.
+version, which the release's notes name, and to the SHA-256 of its file. A
+workflow asks Fleetless's apt repository once a day, and when a new bridge
+is published there, and opens a pull request when it serves a newer one.
