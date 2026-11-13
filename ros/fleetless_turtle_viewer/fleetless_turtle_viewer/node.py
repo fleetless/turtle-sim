@@ -17,8 +17,10 @@ import asyncio
 import base64
 import contextlib
 import errno
+import faulthandler
 import json
 import math
+import os
 import signal
 import threading
 import time
@@ -48,6 +50,16 @@ HEALTHY_WITHIN_S = 2.0
 
 BRIDGE_CHECK_PERIOD_S = 1.0
 """How often the node looks for the bridge on the graph."""
+
+STOP_BOUND_S = 3.0
+"""How long the node may take to end once it was asked to stop. Then it
+says so and ends as it is. In the image, launch follows its interrupt with
+SIGTERM a second later and with SIGKILL five seconds after that, and
+`docker stop` allows ten in all: this is under both."""
+
+STOP_LAST_RESORT_S = 4.0
+"""How long until Python's faulthandler ends a stop that cannot say so
+itself: one that hangs in a ROS call, which keeps Python's lock."""
 
 LATCHED = QoSProfile(
     depth=1,
@@ -359,10 +371,44 @@ async def serve(node: ViewerNode, hub: Hub, stop: asyncio.Event) -> None:
         await runner.cleanup()
 
 
+def _hold_a_stop_to_its_bound(stop: threading.Event, ended: threading.Event) -> None:
+    """Wait for the stop, then give the node `STOP_BOUND_S` to end. A thread of its own runs this.
+
+    What ends a node is ROS's to do, once the HTTP server has closed, and
+    its calls take no bound: one that does not return would keep the process
+    until launch or Docker kills it. So from the moment a stop is asked for,
+    two things watch, the server's last seconds included.
+
+    This thread. When the bound runs out it says one sentence and ends the
+    process with exit code 0: it was asked to stop, and it stops. It writes
+    the sentence to stderr itself, because ROS's logger may be what hangs.
+
+    And Python's faulthandler, a second later. A ROS call that hangs keeps
+    Python's lock, and then no Python thread runs again, this one included.
+    The faulthandler's own thread needs no lock: it writes where every
+    thread stands, which names the call, and ends the process with exit
+    code 1.
+
+    A stop that ends in time sets `ended`, and neither says anything.
+    """
+    stop.wait()
+    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
+    if ended.wait(STOP_BOUND_S):
+        faulthandler.cancel_dump_traceback_later()
+        return
+    words = f"The view did not finish stopping within {STOP_BOUND_S:g} s and ends without it."
+    os.write(2, f"{words}\n".encode())
+    os._exit(0)
+
+
 def run(stop: threading.Event, args=None) -> int:
     """Run the node until a stop arrives. `start.py` sets `stop` on SIGINT and SIGTERM."""
     if stop.is_set():
         return 0  # asked to stop during the imports: there is nothing to undo
+    ended = threading.Event()
+    threading.Thread(
+        target=_hold_a_stop_to_its_bound, args=(stop, ended), name="stop", daemon=True
+    ).start()
     # This process takes the signals itself, so ROS must not.
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     loop = asyncio.new_event_loop()
@@ -387,6 +433,7 @@ def run(stop: threading.Event, args=None) -> int:
         node.destroy_node()
         rclpy.try_shutdown()
         loop.close()
+        ended.set()
         return 0
 
     executor = SingleThreadedExecutor()
@@ -401,8 +448,12 @@ def run(stop: threading.Event, args=None) -> int:
 
     # From here on a stop wakes the event loop. One that came a moment
     # earlier has set the flag, which is why the flag is read after.
+    def on_stop() -> None:
+        stop.set()  # the thread that holds the stop to its bound waits for this one
+        stopping.set()
+
     for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stopping.set)
+        loop.add_signal_handler(signum, on_stop)
     if stop.is_set():
         stopping.set()
     code = 0
@@ -417,4 +468,5 @@ def run(stop: threading.Event, args=None) -> int:
         node.destroy_node()
         rclpy.try_shutdown()
         loop.close()
+        ended.set()
     return code

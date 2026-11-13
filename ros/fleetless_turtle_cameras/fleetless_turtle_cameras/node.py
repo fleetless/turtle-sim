@@ -17,7 +17,9 @@ refused here, with one line in the log, and never reaches them.
 """
 
 import array
+import faulthandler
 import math
+import os
 import threading
 
 import numpy as np
@@ -35,6 +37,16 @@ from .render import eye, top
 from .render.scene import Scene
 
 NODE_NAME = "turtle_cameras"
+
+STOP_BOUND_S = 3.0
+"""How long the node may take to end once it was asked to stop. Then it
+says so and ends as it is. In the image, launch follows its interrupt with
+SIGTERM a second later and with SIGKILL five seconds after that, and
+`docker stop` allows ten in all: this is under both."""
+
+STOP_LAST_RESORT_S = 4.0
+"""How long until Python's faulthandler ends a stop that cannot say so
+itself: one that hangs in a ROS call, which keeps Python's lock."""
 
 # "Latched": a subscriber that joins late still gets the last message.
 LATCHED = QoSProfile(
@@ -172,6 +184,39 @@ class CamerasNode(Node):
             publisher.publish(image)
 
 
+def _hold_a_stop_to_its_bound(
+    stop: threading.Event, failures: list, ended: threading.Event
+) -> None:
+    """Wait for the stop, then give the node `STOP_BOUND_S` to end. A thread of its own runs this.
+
+    What ends a node is ROS's to do, and its calls take no bound: one that
+    does not return would keep the process until launch or Docker kills it.
+    So from the moment a stop is asked for, two things watch.
+
+    This thread. When the bound runs out it says one sentence and ends the
+    process with exit code 0: it was asked to stop, and it stops. It writes
+    the sentence to stderr itself, because ROS's logger may be what hangs.
+
+    And Python's faulthandler, a second later. A ROS call that hangs keeps
+    Python's lock, and then no Python thread runs again, this one included.
+    The faulthandler's own thread needs no lock: it writes where every
+    thread stands, which names the call, and ends the process with exit
+    code 1.
+
+    A stop that ends in time sets `ended`, and neither says anything.
+    """
+    stop.wait()
+    if failures:
+        return  # no stop that was asked for: the failure ends the node, in its own words
+    faulthandler.dump_traceback_later(STOP_LAST_RESORT_S, exit=True, file=2)
+    if ended.wait(STOP_BOUND_S):
+        faulthandler.cancel_dump_traceback_later()
+        return
+    words = f"The cameras did not finish stopping within {STOP_BOUND_S:g} s and end without it."
+    os.write(2, f"{words}\n".encode())
+    os._exit(0)
+
+
 def run(stop: threading.Event, args=None) -> int:
     """Run the node until `stop` is set. `start.py` sets it on SIGINT and SIGTERM.
 
@@ -180,6 +225,11 @@ def run(stop: threading.Event, args=None) -> int:
     """
     if stop.is_set():
         return 0  # asked to stop during the imports: there is nothing to undo
+    failures = []
+    ended = threading.Event()
+    threading.Thread(
+        target=_hold_a_stop_to_its_bound, args=(stop, failures, ended), name="stop", daemon=True
+    ).start()
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = CamerasNode()
     if stop.is_set():
@@ -187,13 +237,13 @@ def run(stop: threading.Event, args=None) -> int:
         # launch whose other node gave up. Nothing is wrong: leave quietly.
         node.destroy_node()
         rclpy.try_shutdown()
+        ended.set()
         return 0
 
     # One thread, as in the simulator's node: no callback here waits for
     # another one, and a picture is drawn in four milliseconds.
     executor = SingleThreadedExecutor()
     executor.add_node(node)
-    failures = []
 
     def spin() -> None:
         try:
@@ -212,6 +262,7 @@ def run(stop: threading.Event, args=None) -> int:
     spinning.join(timeout=5.0)
     node.destroy_node()
     rclpy.try_shutdown()
+    ended.set()
     if failures:
         raise failures[0]
     return 0
