@@ -47,10 +47,19 @@ trap stop INT TERM
 # An empty FLEETLESS_CLOUD_URL is an unset one. docker-compose.yaml names
 # every variable, and one that nobody set arrives here empty. The bridge
 # would take the empty text for the cloud's address; without the variable it
-# uses its own default. (An empty FLEETLESS_TOKEN needs no such line: both
-# the launch file and the bridge read it as no token.)
+# uses its own default.
 if [ -z "${FLEETLESS_CLOUD_URL:-}" ]; then
     unset FLEETLESS_CLOUD_URL
+fi
+
+# A FLEETLESS_TOKEN that is empty or only blanks is an unset one too. The
+# launch file takes any text for a token and starts the bridge; the bridge
+# strips it, finds nothing left, refuses with exit code 2, and is started
+# again five seconds later, for as long as the container runs. Without the
+# variable the two agree by themselves: no token, no bridge. Blanks around a
+# real token stay: the bridge strips them.
+if [ -z "${FLEETLESS_TOKEN//[[:space:]]/}" ]; then
+    unset FLEETLESS_TOKEN
 fi
 
 if [ "$#" -gt 0 ]; then
