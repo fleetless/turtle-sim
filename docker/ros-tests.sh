@@ -34,7 +34,25 @@ set -u
 # Nothing outside this container may answer a test.
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
+# A test that takes longer than its bound ends its package's tests on the
+# spot, with every thread's stack and without a name (test/conftest.py). So
+# each package's tests note in this directory which test they are at, and
+# take the note away when it ends: a note that is left names the test.
+export TURTLE_TEST_ARMED="$WS/armed"
+rm -rf "$TURTLE_TEST_ARMED"
+mkdir "$TURTLE_TEST_ARMED"
+
 # One package at a time: the launch tests measure rates.
+failed=0
 colcon test --base-paths src/turtle-sim/ros --executor sequential \
-    --event-handlers console_direct+ --return-code-on-test-failure
+    --event-handlers console_direct+ --return-code-on-test-failure || failed=$?
+
+# The last word, after the packages that still ran.
+for note in "$TURTLE_TEST_ARMED"/*; do
+    [ -e "$note" ] || continue
+    echo "ros-tests.sh: a test of ${note##*/} did not end, $(cat "$note")." \
+        "If its bound ended it, every thread's stack is further up, below \"Timeout (\"." >&2
+    failed=1
+done
+if [ "$failed" -ne 0 ]; then exit "$failed"; fi
 colcon test-result --verbose
