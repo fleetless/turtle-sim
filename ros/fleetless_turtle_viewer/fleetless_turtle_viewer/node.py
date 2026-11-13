@@ -21,6 +21,7 @@ import faulthandler
 import json
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -280,6 +281,42 @@ class Hub:
             client.offer(kind, text)
 
 
+MOST_ORIGINS_NAMED = 100
+"""How many refused origins the log names. The ones after are refused without a line."""
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+_HOST_AND_PORT = r"(?P<host>\[[0-9A-Fa-f:.]+\]|[^\s/?#@:\[\]]+)(?::(?P<port>[0-9]{1,5}))?"
+_ORIGIN = re.compile(r"(?P<scheme>https?)://" + _HOST_AND_PORT, re.IGNORECASE)
+_HOST = re.compile(_HOST_AND_PORT)
+
+
+def names_this_view(origin: str, host: str | None) -> bool:
+    """Whether an `Origin` header names the place its request was sent to.
+
+    A browser puts the page that opens a WebSocket into `Origin` and the
+    place it connects to into `Host`. For the view's own page the two name
+    the same host and port, on whatever port Docker maps the view to. The
+    scheme is not compared: a proxy may end TLS in front of the view. A side
+    that names no port has the default one of the origin's scheme, which is
+    what a browser leaves out on both sides. What is no `http` or `https`
+    origin (`null`, an empty header, anything with a path) names nothing.
+    """
+    claimed = _ORIGIN.fullmatch(origin)
+    asked = _HOST.fullmatch(host) if host is not None else None
+    if claimed is None or asked is None:
+        return False
+    default = _DEFAULT_PORTS[claimed["scheme"].lower()]
+    return (claimed["host"].lower(), int(claimed["port"] or default)) == (
+        asked["host"].lower(),
+        int(asked["port"] or default),
+    )
+
+
+def _quoted(header: str) -> str:
+    """A header's value for a log line or an answer: in quotes, ASCII, 200 characters at most."""
+    return json.dumps(header if len(header) <= 200 else header[:200] + "...")
+
+
 def build_app(hub: Hub, healthy, web_dir: Path, config: Path) -> web.Application:
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(web_dir / "index.html")
@@ -300,7 +337,41 @@ def build_app(hub: Hub, healthy, web_dir: Path, config: Path) -> web.Application
             },
         )
 
-    async def websocket(request: web.Request) -> web.WebSocketResponse:
+    # The origins the log has named. A refused page tries again every few
+    # seconds, and one site can ask under any number of names.
+    named: set[str] = set()
+
+    def turn_away(origins: list[str], hosts: list[str]) -> web.Response:
+        origin = _quoted(", ".join(origins))
+        if origin not in named and len(named) < MOST_ORIGINS_NAMED:
+            named.add(origin)
+            log = rclpy.logging.get_logger(NODE_NAME)
+            log.warning(
+                f"A page of {origin} asked for the turtle's state at "
+                f"{_quoted(', '.join(hosts))} and was refused: "
+                "the view's WebSocket answers its own page only."
+            )
+            if len(named) == MOST_ORIGINS_NAMED:
+                log.warning(
+                    f"{MOST_ORIGINS_NAMED} origins were refused: the log names no further ones."
+                )
+        return web.Response(
+            status=403,
+            text="The view's WebSocket answers its own page only, "
+            f"and this request names another origin: {origin}.\n",
+        )
+
+    async def websocket(request: web.Request) -> web.StreamResponse:
+        # A browser names the page that opens a WebSocket in `Origin`, and
+        # the page cannot change that. Only the view's own page gets the
+        # turtle's state. A request without the header is no browser's: a
+        # script, a test.
+        origins = request.headers.getall("Origin", [])
+        hosts = request.headers.getall("Host", [])
+        if origins and not (
+            len(origins) == len(hosts) == 1 and names_this_view(origins[0], hosts[0])
+        ):
+            return turn_away(origins, hosts)
         socket = web.WebSocketResponse(heartbeat=20.0)
         await socket.prepare(request)
         client = Client(socket)
