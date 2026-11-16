@@ -10,8 +10,8 @@
 # building the day a newer one is published. A release keeps its files. The
 # bridge-bump workflow rewrites these two lines when apt serves a newer
 # bridge.
-ARG BRIDGE_VERSION=6.5.0-0noble
-ARG BRIDGE_DEB_SHA256=0573a9545b432b3680266c07adc0aa6529f56644d49cf1bd3d41dc98b72734a6
+ARG BRIDGE_VERSION=6.5.1-0noble
+ARG BRIDGE_DEB_SHA256=a452efe99911c75edc7a30991b7c0ca20c7f785e95be0d3b17faf489ee5bd9b9
 
 # --- What every stage needs: ROS, and what the packages' manifests name ------
 FROM ros:jazzy-ros-base AS base
