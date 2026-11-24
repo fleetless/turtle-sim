@@ -31,9 +31,18 @@ DEB_SHA256 = ROOT / "scripts" / "bridge-deb-sha256"
 
 PKG = "ros-jazzy-fleetless-bridge"
 RELEASES = "https://github.com/fleetless/bridge/releases/download"
-A = "0573a9545b432b3680266c07adc0aa6529f56644d49cf1bd3d41dc98b72734a6"
-B = "a452efe99911c75edc7a30991b7c0ca20c7f785e95be0d3b17faf489ee5bd9b9"
-C = "c723d14527c709f5742e8f79c203374eaaa375f1a23e5ee8e4d0762c54a50a60"
+# Made up, and visibly so: one hex digit 64 times is the sum of no `.deb`
+# anybody will build. A real bridge's sum is one the Dockerfile pins some
+# day, and a test that reads the pin then holds the fixture against itself.
+# These were once the sums of bridges 6.5.0 and 6.5.1, and the pull request
+# that pinned 6.5.1 went red on a test that moved the pin to the sum it
+# already had. `pinned()` refuses a fixture that is the pin.
+A = "a" * 64
+B = "b" * 64
+C = "c" * 64
+# The other sums apt's index gives, which nothing compares: made up the same way.
+SHA1 = "1" * 40
+MD5 = "5" * 32
 # What the App's token is in these tests. It must reach no command line.
 TOKEN = "ghs_a-token-nobody-may-see"
 
@@ -67,8 +76,8 @@ def stanza(version: str, sha256: str | None, package: str = PKG) -> str:
         f"Filename: pool/main/r/{package}/{package}_{version}_all.deb",
         "Size: 269554",
         *([f"SHA256: {sha256}"] if sha256 is not None else []),
-        "SHA1: ba41d5788cc246d54831c8c7f37c8fd4250f8daa",
-        "MD5sum: 97f9bad2366e5698d50257c7f3d5405e",
+        f"SHA1: {SHA1}",
+        f"MD5sum: {MD5}",
         "Description: Fleetless Bridge: connects a ROS 2 robot to the Fleetless cloud.",
         " A second line of it.",
         " .",
@@ -538,7 +547,11 @@ def run_the_job(
     (checkout / "scripts").mkdir(parents=True)
     for script in [APT_VERSION, DEB_SHA256]:
         shutil.copy(script, checkout / "scripts" / script.name)
-    before = dockerfile if dockerfile is not None else (ROOT / "Dockerfile").read_text()
+    if dockerfile is None:
+        # The checkout's own pin, which the job reads: no fixture may be it.
+        pinned()
+        dockerfile = (ROOT / "Dockerfile").read_text()
+    before = dockerfile
     (checkout / "Dockerfile").write_text(before)
     served = {apt_index_url(): apt_serves}
     served |= {sums_url(upstream): text for upstream, text in released.items()}
@@ -593,19 +606,56 @@ def run_the_job(
 
 
 def pinned() -> tuple[str, str]:
-    """The version and the sum this checkout's Dockerfile pins."""
+    """The version and the sum this checkout's Dockerfile pins.
+
+    The tests hold their fixtures against this pin, and the pin moves with
+    every bridge. A fixture that is the pin stands for no other bridge, and
+    the test would assert something else than it says; so that ends it here,
+    with a sentence, before anything else is asserted.
+    """
     text = (ROOT / "Dockerfile").read_text()
     [version] = re.findall(r"^ARG BRIDGE_VERSION=(.+)$", text, re.MULTILINE)
     [sha256] = re.findall(r"^ARG BRIDGE_DEB_SHA256=(.+)$", text, re.MULTILINE)
+    fixtures = [
+        ("version NEWER", NEWER, "ARG BRIDGE_VERSION", version),
+        ("version OLDER", OLDER, "ARG BRIDGE_VERSION", version),
+        ("sum A", A, "ARG BRIDGE_DEB_SHA256", sha256),
+        ("sum B", B, "ARG BRIDGE_DEB_SHA256", sha256),
+        ("sum C", C, "ARG BRIDGE_DEB_SHA256", sha256),
+    ]
+    for name, fixture, line, pin in fixtures:
+        assert fixture != pin, (
+            f"The fixture {name} is {pin}, which this checkout's Dockerfile pins in {line}, "
+            "so it stands for no other bridge and has to be made up anew."
+        )
     return version, sha256
 
 
 NEWER = "99.1.0-0noble"
+OLDER = "0.0.1-0noble"
 VERSIONS, SUM, PULL_REQUEST = (
     "what apt serves, and what the Dockerfile pins",
     "the sum of its .deb, from the release and from apt",
     "the pull request",
 )
+
+
+@pytest.mark.parametrize(
+    ("fixture", "which", "said"),
+    [("B", 1, "sum B"), ("NEWER", 0, "version NEWER")],
+    ids=["a sum", "a version"],
+)
+def test_a_fixture_that_is_the_pin_ends_the_test_with_one_sentence(
+    monkeypatch, fixture, which, said
+):
+    pin = pinned()[which]
+    monkeypatch.setitem(globals(), fixture, pin)
+    with pytest.raises(AssertionError) as refusal:
+        pinned()
+    sentence = str(refusal.value).splitlines()[0]
+    assert sentence.startswith(f"The fixture {said} is {pin}, which this checkout's Dockerfile")
+    assert sentence.endswith(".")
+    assert sentence.count(". ") == 0
 
 
 def test_the_job_has_the_steps_these_tests_run():
@@ -632,7 +682,7 @@ def test_apt_serving_the_pinned_bridge_opens_nothing(tmp_path):
 
 
 def test_apt_serving_an_older_bridge_than_the_pin_opens_nothing(tmp_path):
-    job = run_the_job(tmp_path, apt_serves=stanza("0.0.1-0noble", A), released={})
+    job = run_the_job(tmp_path, apt_serves=stanza(OLDER, A), released={})
     assert job["failed"] is None, job["ran"]
     assert job["known"]["steps.versions.outputs.newer"] == "false"
     assert (job["git"], job["gh"]) == ([], [])
