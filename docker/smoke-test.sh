@@ -324,6 +324,103 @@ for delay in 0.1 0.2 0.3 0.5 0.8 1.0 1.2 1.5 2 3; do
     remove
 done
 
+# --- A stop as launch's loop starts ----------------------------------------------
+# One moment of the start the delays above meet only now and then, on one
+# machine at one delay and with luck: launch has its loop, and `begin` has
+# not run yet. A stop then has `begin` start nothing, launch finds itself
+# idle and ends its loop, and the launcher's stop thread must not be
+# waiting for that loop with launch's lock in its hand. Here the moment is
+# made, every time: the real launcher.main(), the stop heard right after
+# launch's two first lines, and whatever the stop thread hands to the loop
+# held back until the loop is on its way out, which is where a stop thread
+# that lost the processor at the wrong moment stands. Nothing is timed.
+# The launcher has to return 0 within five seconds of the stop; a watchdog
+# inside says in one sentence when it has not, and ends it.
+seam=$(cat << 'PYTHON'
+import asyncio.base_events
+import os
+import signal
+import sys
+import threading
+import time
+
+patience = int(sys.argv[1])
+sys.path.insert(0, "/opt/turtle")
+import launcher  # noqa: E402
+
+import launch.launch_service  # noqa: E402
+import launch.logging  # noqa: E402
+
+heard = threading.Event()  # the stop, at the moment
+handing = threading.Event()  # the stop thread hands something to the loop
+leaving = threading.Event()  # launch's signal manager is gone: the loop ends
+
+
+def say(sentence, code):
+    print(sentence, file=sys.stderr, flush=True)
+    os._exit(code)
+
+
+def watchdog():
+    if not heard.wait(30 * patience):
+        say("The stop was never heard where launch has its loop and begin has not run.", 4)
+    time.sleep(5 * patience)
+    say(f"launcher.main() had not returned {5 * patience} s after the stop.", 3)
+
+
+threading.Thread(target=watchdog, daemon=True).start()
+
+log_launch_config = launch.logging.log_launch_config
+
+
+def log_then_stop(*args, **kwargs):
+    log_launch_config(*args, **kwargs)
+    # As from the entrypoint; the launcher's handler runs before this returns.
+    signal.raise_signal(signal.SIGUSR1)
+    heard.set()
+    handing.wait(3 * patience)
+
+
+launch.logging.log_launch_config = log_then_stop
+
+manager = launch.launch_service.AsyncSafeSignalManager
+manager_exit = manager.__exit__
+
+
+def exit_then_say(self, *args):
+    try:
+        return manager_exit(self, *args)
+    finally:
+        leaving.set()
+
+
+manager.__exit__ = exit_then_say
+
+# The one door into a running loop from another thread; asyncio's
+# run_coroutine_threadsafe goes through it too.
+call_soon_threadsafe = asyncio.base_events.BaseEventLoop.call_soon_threadsafe
+
+
+def held_back(self, *args, **kwargs):
+    if threading.current_thread() is not threading.main_thread():
+        handing.set()
+        leaving.wait(3 * patience)
+    return call_soon_threadsafe(self, *args, **kwargs)
+
+
+asyncio.base_events.BaseEventLoop.call_soon_threadsafe = held_back
+
+sys.exit(launcher.main())
+PYTHON
+)
+to_its_end "a stop as launch's loop starts" "$name" --network none "$image" python3 -c "$seam" "$patience"
+if [ "$code" -eq 3 ]; then
+    fail "a stop as launch's loop starts left the launcher waiting for launch, and launch for the launcher"
+fi
+[ "$code" -eq 0 ] || fail "a stop as launch's loop starts left the launcher at exit $code"
+if grep -qF "Traceback" <<< "$said"; then fail "a stop as launch's loop starts left a stack trace"; fi
+pass "a stop as launch's loop starts: the launcher ended with exit 0 and a clean log"
+
 # --- The same stop, with the entrypoint held back --------------------------------
 # The delays above meet the job notice only now and then: bash prints it
 # when the turtle ends between two of the entrypoint's lines instead of
