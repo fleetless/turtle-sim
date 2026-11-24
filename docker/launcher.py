@@ -21,6 +21,7 @@ moment: a process that has not asked for it yet simply ends, and one that
 has takes it as the same request again.
 """
 
+import functools
 import os
 import signal
 import sys
@@ -86,9 +87,20 @@ def main() -> int:
 
     def pass_the_stop_on() -> None:
         stop.wait()
-        # Does nothing while launch is not running yet. Then `begin`, which
-        # runs first thing, finds the flag set.
-        service.shutdown()
+        # Handed to launch's loop, and not waited for. Called from this
+        # thread, LaunchService.shutdown() holds launch's lock until the loop
+        # has taken the stop. A loop that ends by itself meanwhile, idle
+        # because `begin` saw the flag and started nothing, takes that same
+        # lock as it ends, and the two wait for each other until Docker
+        # kills the container. On the loop's own thread the stop is queued,
+        # as launch queues a Ctrl-C, and nothing waits.
+        #
+        # No loop yet: `begin`, which runs first thing, finds the flag set.
+        # The loop gone: the run is over. A loop that ends before it gets to
+        # the stop leaves it unread, and the stop finds nothing running.
+        loop = service.event_loop
+        if loop is not None:
+            loop.call_soon_threadsafe(functools.partial(service.shutdown, force_sync=True))
 
     threading.Thread(target=pass_the_stop_on, name="stop", daemon=True).start()
     return service.run()
