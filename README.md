@@ -53,12 +53,13 @@ what. Take [`fleetless/turtle.fleetless.yaml`](fleetless/turtle.fleetless.yaml),
 which the view also hands out at <http://localhost:8765/fleetless.yaml>, put
 it into the robot's configuration in the console and publish it.
 
-Publishing lists one `unknown_type` warning per entry, for standard ROS types
-as much as for the turtle's own: the cloud has not looked at this robot's
-message types yet. They are warnings. The file publishes, the bridge applies
-it, the values flow. To be rid of them, have the cloud fetch the types once
-while the turtle is connected (over MCP: `console_introspection_write`,
-action `fetch_types`) and publish again.
+The cloud reads the turtle's names and message types when it first connects,
+and publishing checks the file against them. If the publish still lists
+`unknown_type` warnings, the read had not finished: press **Read from robot**
+beside the editor, on the **Robot's names** tab (over MCP:
+`console_introspection_write`, action `refresh`), and publish again. They are
+warnings either way. The file publishes, the bridge applies it, the values
+flow.
 
 ## 🕹️ What to try
 
